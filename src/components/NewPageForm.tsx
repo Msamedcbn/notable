@@ -129,7 +129,7 @@ export default function NewPageForm({ onSuccess, pageNumber }: NewPageFormProps)
               value={content}
               onChange={(e) => setContent(e.target.value)}
               placeholder="Dear other half, I wanted to tell you..."
-              className="w-full flex-1 p-4 bg-white/40 border border-[#e8dfd0] rounded-lg focus:outline-none focus:ring-1 focus:ring-[#8b5a2b]/50 focus:border-[#8b5a2b]/50 font-serif italic text-base leading-relaxed resize-none text-[#2d2621] placeholder-[#8b5a2b]/40 shadow-inner"
+              className="w-full flex-1 p-4 bg-white/40 border border-[#e8dfd0] rounded-lg focus:outline-none focus:ring-1 focus:ring-[#8b5a2b]/50 focus:border-[#8b5a2b]/50 font-body italic text-base leading-relaxed resize-none text-[#2d2621] placeholder-[#8b5a2b]/40 shadow-inner"
               style={{
                 backgroundImage: 'linear-gradient(rgba(0,0,0,0.01) 1px, transparent 1px)',
                 backgroundSize: '100% 2rem',

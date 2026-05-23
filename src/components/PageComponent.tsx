@@ -233,7 +233,7 @@ export default function PageComponent({
         )}
 
         <div className="flex-1">
-          <p className="font-serif text-[#2d2621] text-base leading-relaxed whitespace-pre-wrap italic">
+          <p className="font-body text-[#2d2621] text-base leading-relaxed whitespace-pre-wrap italic">
             {entry.content}
           </p>
         </div>
