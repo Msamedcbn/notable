@@ -1,0 +1,81 @@
+@import "tailwindcss";
+
+@theme {
+  --font-serif: var(--font-playfair), Georgia, serif;
+  --font-body: var(--font-lora), Georgia, serif;
+  --font-sans: var(--font-inter), sans-serif;
+}
+
+:root {
+  --paper-bg: #fbf8f3;
+  --paper-line: #e8dfd0;
+  --paper-text: #2d2621;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: #12100e;
+  overflow-x: hidden;
+}
+
+/* Parchment / Paper Effect */
+.paper-page {
+  background-color: var(--paper-bg);
+  background-image: 
+    radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.4) 0%, rgba(0, 0, 0, 0.03) 100%),
+    linear-gradient(rgba(0,0,0,0.01) 1px, transparent 1px);
+  background-size: 100% 100%, 100% 2rem;
+  box-shadow: 
+    0 10px 30px -10px rgba(0,0,0,0.5),
+    0 1px 3px rgba(0,0,0,0.1),
+    inset 0 0 40px rgba(139, 90, 43, 0.08);
+  position: relative;
+}
+
+/* Ruled paper lines if needed */
+.ruled-lines {
+  background-image: linear-gradient(var(--paper-line) 1px, transparent 1px);
+  background-size: 100% 1.8rem;
+  line-height: 1.8rem;
+}
+
+/* Book fold shadow overlay */
+.book-fold-left {
+  background: linear-gradient(to right, rgba(0,0,0,0.0) 80%, rgba(0,0,0,0.12) 100%);
+}
+.book-fold-right {
+  background: linear-gradient(to left, rgba(0,0,0,0.0) 80%, rgba(0,0,0,0.12) 100%);
+}
+
+.book-spine-shadow {
+  background: linear-gradient(to right, 
+    rgba(0,0,0,0.15) 0%, 
+    rgba(0,0,0,0.3) 25%,
+    rgba(0,0,0,0.4) 50%,
+    rgba(0,0,0,0.3) 75%,
+    rgba(0,0,0,0.15) 100%
+  );
+  box-shadow: 0 0 10px rgba(0,0,0,0.5);
+}
+
+/* Elegant handwriting font styling using lora */
+.handwritten {
+  font-family: var(--font-body);
+  font-style: italic;
+}
+
+/* Custom Scrollbars for diary feel */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.05);
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(139, 90, 43, 0.3);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(139, 90, 43, 0.5);
+}
