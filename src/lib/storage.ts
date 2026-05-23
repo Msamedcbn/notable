@@ -5,7 +5,7 @@ import { supabase, isDemoMode } from './supabase';
  * In Supabase mode: Uploads to private bucket and returns path.
  * In Demo Mode: Converts to base64 data URL and returns it.
  */
-export async function uploadImage(file: File): Promise<string> {
+export async function uploadImage(file: File, userId: string, notebookId: string): Promise<string> {
   if (isDemoMode) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -22,11 +22,13 @@ export async function uploadImage(file: File): Promise<string> {
 
   const fileExt = file.name.split('.').pop();
   const randomId = Math.random().toString(36).substring(2, 15);
-  const fileName = `${Date.now()}-${randomId}.${fileExt}`;
+  const safeExt = (fileExt || 'jpg').toLowerCase();
+  const fileName = `${Date.now()}-${randomId}.${safeExt}`;
+  const filePath = `${userId}/${notebookId}/${fileName}`;
 
   const { data, error } = await supabase.storage
     .from('notebook-images')
-    .upload(fileName, file, {
+    .upload(filePath, file, {
       cacheControl: '3600',
       upsert: false,
     });

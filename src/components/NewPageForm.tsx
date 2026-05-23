@@ -21,6 +21,23 @@ export default function NewPageForm({ onSuccess, pageNumber, notebookId }: NewPa
   const [errorMsg, setErrorMsg] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const withTimeout = async <T,>(promise: PromiseLike<T>, ms: number, label: string): Promise<T> => {
+    return new Promise<T>((resolve, reject) => {
+      const timer = window.setTimeout(() => {
+        reject(new Error(`${label} timed out. Please try again.`));
+      }, ms);
+      Promise.resolve(promise)
+        .then((value) => {
+          window.clearTimeout(timer);
+          resolve(value);
+        })
+        .catch((error: unknown) => {
+          window.clearTimeout(timer);
+          reject(error);
+        });
+    });
+  };
+
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
@@ -57,9 +74,17 @@ export default function NewPageForm({ onSuccess, pageNumber, notebookId }: NewPa
 
     try {
       let imagePath = '';
+      const userEmail = user?.email?.trim().toLowerCase();
+      if (!user?.id || !userEmail) {
+        throw new Error('Session is invalid. Please sign out and sign in again.');
+      }
 
       if (imageFile) {
-        imagePath = await uploadImage(imageFile);
+        imagePath = await withTimeout(
+          uploadImage(imageFile, user.id, notebookId),
+          20000,
+          'Image upload'
+        );
       }
 
       if (isDemoMode) {
@@ -69,7 +94,7 @@ export default function NewPageForm({ onSuccess, pageNumber, notebookId }: NewPa
           id: typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : Math.random().toString(36).substring(2),
           notebook_id: notebookId,
           author_id: user?.id || 'mock-user-1',
-          author_email: user?.email || 'user1@example.com',
+          author_email: userEmail,
           content: content.trim(),
           image_url: imagePath || null,
           page_number: mockEntries.length + 1,
@@ -79,11 +104,18 @@ export default function NewPageForm({ onSuccess, pageNumber, notebookId }: NewPa
         localStorage.setItem('mock_notebook_entries', JSON.stringify(mockEntries));
       } else {
         // Insert notebook entry
-        const { error } = await supabase.from('notebook_entries').insert({
-          notebook_id: notebookId,
-          content: content.trim(),
-          image_url: imagePath || null,
-        });
+        const insertResult = await withTimeout<{ error: { message?: string } | null }>(
+          supabase.from('notebook_entries').insert({
+            notebook_id: notebookId,
+            author_id: user.id,
+            author_email: userEmail,
+            content: content.trim(),
+            image_url: imagePath || null,
+          }),
+          20000,
+          'Saving message'
+        );
+        const { error } = insertResult;
 
         if (error) {
           throw error;
