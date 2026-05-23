@@ -188,6 +188,11 @@ export default function HomePage() {
     setSetupError('');
 
     try {
+      const userEmail = user.email?.trim().toLowerCase();
+      if (!userEmail) {
+        throw new Error('Kullanici e-posta bilgisi okunamadi. Lutfen tekrar giris yapin.');
+      }
+
       const generatedId = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : Math.random().toString(36).substring(2);
       
       if (isDemoMode) {
@@ -232,7 +237,7 @@ export default function HomePage() {
           .insert({
             notebook_id: notebook.id,
             user_id: user.id,
-            user_email: user.email
+            user_email: userEmail
           });
 
         if (mError) throw mError;
@@ -258,6 +263,10 @@ export default function HomePage() {
 
     try {
       const code = inviteCodeInput.trim();
+      const userEmail = user.email?.trim().toLowerCase();
+      if (!userEmail) {
+        throw new Error('Kullanici e-posta bilgisi okunamadi. Lutfen tekrar giris yapin.');
+      }
 
       if (isDemoMode) {
         const mockNotebooksStr = localStorage.getItem('mock_notebooks') || '[]';
@@ -284,7 +293,7 @@ export default function HomePage() {
         mockMembers.push({
           notebook_id: targetNotebook.id,
           user_id: user.id,
-          user_email: user.email
+          user_email: userEmail
         });
         localStorage.setItem('mock_notebook_members', JSON.stringify(mockMembers));
 
@@ -316,7 +325,7 @@ export default function HomePage() {
           .insert({
             notebook_id: notebook.id,
             user_id: user.id,
-            user_email: user.email
+            user_email: userEmail
           });
 
         if (mError) {
