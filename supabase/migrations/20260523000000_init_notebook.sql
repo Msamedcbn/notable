@@ -93,7 +93,7 @@ CREATE POLICY "Allow upload of images for allowed users"
     WITH CHECK (
         bucket_id = 'notebook-images' AND
         public.is_allowed_user() AND
-        (owner = auth.uid()::text OR owner IS NULL)
+        (owner::text = auth.uid()::text OR owner IS NULL)
     );
 
 -- 3. Allow authenticated users to delete their own images
@@ -104,7 +104,7 @@ CREATE POLICY "Allow delete of own images for allowed users"
     USING (
         bucket_id = 'notebook-images' AND
         public.is_allowed_user() AND
-        owner = auth.uid()::text
+        owner::text = auth.uid()::text
     );
 
 -- Populate allowed emails with demo accounts
