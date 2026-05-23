@@ -38,16 +38,92 @@ export default function NewPageForm({ onSuccess, pageNumber, notebookId }: NewPa
     });
   };
 
+  const compressImageForUpload = async (file: File): Promise<File> => {
+    // Keep already-efficient images as-is unless they are very large.
+    if (file.size <= 2 * 1024 * 1024 && ['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+      return file;
+    }
+
+    return new Promise<File>((resolve, reject) => {
+      const img = new Image();
+      const objectUrl = URL.createObjectURL(file);
+
+      img.onload = () => {
+        try {
+          const maxDimension = 1920;
+          const ratio = Math.min(1, maxDimension / Math.max(img.width, img.height));
+          const width = Math.max(1, Math.round(img.width * ratio));
+          const height = Math.max(1, Math.round(img.height * ratio));
+
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            URL.revokeObjectURL(objectUrl);
+            reject(new Error('Image processing is not available on this device.'));
+            return;
+          }
+
+          ctx.drawImage(img, 0, 0, width, height);
+          canvas.toBlob(
+            (blob) => {
+              URL.revokeObjectURL(objectUrl);
+              if (!blob) {
+                reject(new Error('Could not optimize image for upload.'));
+                return;
+              }
+
+              const baseName = file.name.replace(/\.[^.]+$/, '') || 'photo';
+              resolve(new File([blob], `${baseName}.jpg`, { type: 'image/jpeg' }));
+            },
+            'image/jpeg',
+            0.82
+          );
+        } catch (error) {
+          URL.revokeObjectURL(objectUrl);
+          reject(error);
+        }
+      };
+
+      img.onerror = () => {
+        URL.revokeObjectURL(objectUrl);
+        reject(new Error('This image format is not supported on your browser.'));
+      };
+
+      img.src = objectUrl;
+    });
+  };
+
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
-      if (file.size > 5 * 1024 * 1024) {
-        setErrorMsg('Image size should be less than 5MB.');
-        return;
-      }
-      setImageFile(file);
-      setImagePreview(URL.createObjectURL(file));
       setErrorMsg('');
+      setLoading(true);
+
+      compressImageForUpload(file)
+        .then((preparedFile) => {
+          if (preparedFile.size > 5 * 1024 * 1024) {
+            throw new Error('Image is still too large after optimization. Please choose another photo.');
+          }
+
+          setImageFile(preparedFile);
+          if (imagePreview) URL.revokeObjectURL(imagePreview);
+          setImagePreview(URL.createObjectURL(preparedFile));
+        })
+        .catch((error: unknown) => {
+          const message = error instanceof Error ? error.message : 'Image could not be processed.';
+          setErrorMsg(message);
+          if (fileInputRef.current) fileInputRef.current.value = '';
+          setImageFile(null);
+          if (imagePreview) {
+            URL.revokeObjectURL(imagePreview);
+            setImagePreview(null);
+          }
+        })
+        .finally(() => {
+          setLoading(false);
+        });
     }
   };
 
