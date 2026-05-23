@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import { supabase, isDemoMode } from '@/lib/supabase';
@@ -34,6 +34,13 @@ export default function HomePage() {
   const [copied, setCopied] = useState(false);
 
   const router = useRouter();
+
+  useEffect(() => {
+    if (!user || notebookId !== null || !fetching) return;
+
+    const timer = window.setTimeout(() => setFetching(false), 400);
+    return () => window.clearTimeout(timer);
+  }, [user, notebookId, fetching]);
 
   // Redirect if user not logged in
   useEffect(() => {
@@ -340,8 +347,6 @@ export default function HomePage() {
 
   // 1. Loading state
   if (user && notebookId === null && fetching) {
-    // If notebookId is not fetched yet, wait a second
-    setTimeout(() => setFetching(false), 400);
     return (
       <div className="flex h-screen items-center justify-center bg-[#12100e] text-[#faf5eb]">
         <div className="flex flex-col items-center gap-4">

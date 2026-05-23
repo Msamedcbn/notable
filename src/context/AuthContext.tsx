@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase, isDemoMode } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
@@ -21,17 +21,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [notebookId, setNotebookId] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
+  const userRef = useRef<User | null>(null);
   const router = useRouter();
 
   // Fetch active notebook membership
-  const refreshNotebookId = useCallback(async (currentUser: User | null = user): Promise<string | null> => {
-    if (!currentUser) {
+  const refreshNotebookId = useCallback(async (currentUser?: User | null): Promise<string | null> => {
+    const resolvedUser = currentUser ?? userRef.current;
+    if (!resolvedUser) {
       setNotebookId(null);
       return null;
     }
 
     if (isDemoMode) {
-      const mockNotebookId = localStorage.getItem(`mock_notebook_id_${currentUser.id}`);
+      const mockNotebookId = localStorage.getItem(`mock_notebook_id_${resolvedUser.id}`);
       setNotebookId(mockNotebookId);
       return mockNotebookId;
     }
@@ -40,7 +42,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const { data, error } = await supabase
         .from('notebook_members')
         .select('notebook_id')
-        .eq('user_id', currentUser.id)
+        .eq('user_id', resolvedUser.id)
         .maybeSingle();
 
       if (error) {
@@ -57,6 +59,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setNotebookId(null);
       return null;
     }
+  }, []);
+
+  useEffect(() => {
+    userRef.current = user;
   }, [user]);
 
   const signInMockUser = (email: string, displayName: string) => {
