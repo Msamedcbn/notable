@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase, isDemoMode } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
@@ -8,49 +8,56 @@ import { useRouter } from 'next/navigation';
 interface AuthContextType {
   user: User | null;
   loading: boolean;
-  isAllowed: boolean;
-  checkAllowedUser: (email: string) => Promise<boolean>;
+  notebookId: string | null;
+  refreshNotebookId: () => Promise<string | null>;
   signOut: () => Promise<void>;
   signInMockUser: (email: string, displayName: string) => void;
+  setMockNotebookId: (id: string | null) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-  const [isAllowed, setIsAllowed] = useState<boolean>(false);
+  const [notebookId, setNotebookId] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const router = useRouter();
 
-  const checkAllowedUser = async (email: string): Promise<boolean> => {
+  // Fetch active notebook membership
+  const refreshNotebookId = useCallback(async (currentUser: User | null = user): Promise<string | null> => {
+    if (!currentUser) {
+      setNotebookId(null);
+      return null;
+    }
+
     if (isDemoMode) {
-      const allowedEmails = [
-        'user1@example.com',
-        'user2@example.com',
-        'demo@example.com',
-        'partner@example.com',
-      ];
-      return allowedEmails.includes(email.trim().toLowerCase());
+      const mockNotebookId = localStorage.getItem(`mock_notebook_id_${currentUser.id}`);
+      setNotebookId(mockNotebookId);
+      return mockNotebookId;
     }
 
     try {
       const { data, error } = await supabase
-        .from('allowed_emails')
-        .select('email')
-        .eq('email', email)
+        .from('notebook_members')
+        .select('notebook_id')
+        .eq('user_id', currentUser.id)
         .maybeSingle();
 
       if (error) {
-        console.error('Error verifying allowed user:', error);
-        return false;
+        console.error('Error fetching notebook membership:', error);
+        setNotebookId(null);
+        return null;
       }
 
-      return !!data;
+      const activeNotebookId = data?.notebook_id || null;
+      setNotebookId(activeNotebookId);
+      return activeNotebookId;
     } catch (err) {
-      console.error('Exception verifying user:', err);
-      return false;
+      console.error('Exception fetching membership:', err);
+      setNotebookId(null);
+      return null;
     }
-  };
+  }, [user]);
 
   const signInMockUser = (email: string, displayName: string) => {
     const mockUser: User = {
@@ -63,7 +70,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
     localStorage.setItem('mock_user', JSON.stringify(mockUser));
     setUser(mockUser);
-    setIsAllowed(true);
+    
+    // Load their mock notebook ID immediately
+    const mockNotebookId = localStorage.getItem(`mock_notebook_id_${mockUser.id}`) || null;
+    setNotebookId(mockNotebookId);
+  };
+
+  const setMockNotebookId = (id: string | null) => {
+    if (user) {
+      if (id) {
+        localStorage.setItem(`mock_notebook_id_${user.id}`, id);
+      } else {
+        localStorage.removeItem(`mock_notebook_id_${user.id}`);
+      }
+      setNotebookId(id);
+    }
   };
 
   useEffect(() => {
@@ -71,11 +92,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setLoading(true);
       const savedUser = localStorage.getItem('mock_user');
       if (savedUser) {
-        setUser(JSON.parse(savedUser));
-        setIsAllowed(true);
+        const parsedUser = JSON.parse(savedUser);
+        setUser(parsedUser);
+        const mockNotebookId = localStorage.getItem(`mock_notebook_id_${parsedUser.id}`);
+        setNotebookId(mockNotebookId);
       } else {
         setUser(null);
-        setIsAllowed(false);
+        setNotebookId(null);
       }
       setLoading(false);
       return;
@@ -88,15 +111,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const { data: { session } } = await supabase.auth.getSession();
         if (session?.user) {
           setUser(session.user);
-          const allowed = await checkAllowedUser(session.user.email || '');
-          setIsAllowed(allowed);
-          if (!allowed) {
-            await supabase.auth.signOut();
-            setUser(null);
-          }
+          await refreshNotebookId(session.user);
         } else {
           setUser(null);
-          setIsAllowed(false);
+          setNotebookId(null);
         }
       } catch (error) {
         console.error('Session check error:', error);
@@ -113,15 +131,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setLoading(true);
         if (session?.user) {
           setUser(session.user);
-          const allowed = await checkAllowedUser(session.user.email || '');
-          setIsAllowed(allowed);
-          if (!allowed) {
-            await supabase.auth.signOut();
-            setUser(null);
-          }
+          await refreshNotebookId(session.user);
         } else {
           setUser(null);
-          setIsAllowed(false);
+          setNotebookId(null);
         }
         setLoading(false);
       }
@@ -130,7 +143,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => {
       subscription.unsubscribe();
     };
-  }, []);
+  }, [refreshNotebookId]);
 
   const signOut = async () => {
     setLoading(true);
@@ -140,14 +153,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await supabase.auth.signOut();
     }
     setUser(null);
-    setIsAllowed(false);
+    setNotebookId(null);
     setLoading(false);
     router.push('/login');
   };
 
   return (
     <AuthContext.Provider
-      value={{ user, loading, isAllowed, checkAllowedUser, signOut, signInMockUser }}
+      value={{
+        user,
+        loading,
+        notebookId,
+        refreshNotebookId,
+        signOut,
+        signInMockUser,
+        setMockNotebookId,
+      }}
     >
       {children}
     </AuthContext.Provider>

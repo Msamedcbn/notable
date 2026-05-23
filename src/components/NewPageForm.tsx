@@ -9,9 +9,10 @@ import { useAuth } from '@/context/AuthContext';
 interface NewPageFormProps {
   onSuccess: () => void;
   pageNumber: number;
+  notebookId: string;
 }
 
-export default function NewPageForm({ onSuccess, pageNumber }: NewPageFormProps) {
+export default function NewPageForm({ onSuccess, pageNumber, notebookId }: NewPageFormProps) {
   const { user } = useAuth();
   const [content, setContent] = useState('');
   const [imageFile, setImageFile] = useState<File | null>(null);
@@ -66,6 +67,7 @@ export default function NewPageForm({ onSuccess, pageNumber }: NewPageFormProps)
         const mockEntries = JSON.parse(mockEntriesStr);
         const newEntry = {
           id: typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : Math.random().toString(36).substring(2),
+          notebook_id: notebookId,
           author_id: user?.id || 'mock-user-1',
           author_email: user?.email || 'user1@example.com',
           content: content.trim(),
@@ -78,6 +80,7 @@ export default function NewPageForm({ onSuccess, pageNumber }: NewPageFormProps)
       } else {
         // Insert notebook entry
         const { error } = await supabase.from('notebook_entries').insert({
+          notebook_id: notebookId,
           content: content.trim(),
           image_url: imagePath || null,
         });

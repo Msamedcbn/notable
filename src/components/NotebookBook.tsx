@@ -20,9 +20,10 @@ interface NotebookEntry {
 interface NotebookBookProps {
   entries: NotebookEntry[];
   onRefresh: () => void;
+  notebookId: string;
 }
 
-export default function NotebookBook({ entries, onRefresh }: NotebookBookProps) {
+export default function NotebookBook({ entries, onRefresh, notebookId }: NotebookBookProps) {
   const { user, signOut } = useAuth();
   const [isMobile, setIsMobile] = useState(false);
   const [currentPageIndex, setCurrentPageIndex] = useState(0); // For mobile
@@ -167,6 +168,7 @@ export default function NotebookBook({ entries, onRefresh }: NotebookBookProps) 
           <NewPageForm
             onSuccess={handleSuccess}
             pageNumber={pageItem.pageNumber}
+            notebookId={notebookId}
           />
         }
       />

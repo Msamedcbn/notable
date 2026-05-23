@@ -8,7 +8,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Mail, Lock, BookOpen, User, ShieldAlert, Sparkles, Heart } from 'lucide-react';
 
 export default function LoginPage() {
-  const { user, isAllowed, loading, checkAllowedUser, signInMockUser } = useAuth();
+  const { user, notebookId, loading, signInMockUser } = useAuth();
   const [isSignUp, setIsSignUp] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -18,11 +18,12 @@ export default function LoginPage() {
   const [actionLoading, setActionLoading] = useState(false);
   const router = useRouter();
 
+  // Redirect to home if logged in
   useEffect(() => {
-    if (user && isAllowed && !loading) {
+    if (user && !loading) {
       router.push('/');
     }
-  }, [user, isAllowed, loading, router]);
+  }, [user, loading, router]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -39,13 +40,6 @@ export default function LoginPage() {
     try {
       if (isDemoMode) {
         // Offline Demo Mode Logic
-        const allowed = await checkAllowedUser(email.trim().toLowerCase());
-        if (!allowed) {
-          setErrorMsg('Access Denied. In Demo Mode, you can only log in with user1@example.com or user2@example.com.');
-          setActionLoading(false);
-          return;
-        }
-
         const displayName = isSignUp
           ? (name.trim() || 'Partner')
           : (email.trim().toLowerCase().startsWith('user1') ? 'Romeo' : 'Juliet');
@@ -58,20 +52,12 @@ export default function LoginPage() {
       // Supabase Active Database Mode Logic
       if (isSignUp) {
         if (!name) {
-          setErrorMsg('Please provide a name/nickname for the scrapbook.');
+          setErrorMsg('Please provide a name/nickname.');
           setActionLoading(false);
           return;
         }
 
-        // 1. Verify if the email is allowed BEFORE signing up
-        const allowed = await checkAllowedUser(email.trim().toLowerCase());
-        if (!allowed) {
-          setErrorMsg('Access Denied. This email is not authorized to join this notebook.');
-          setActionLoading(false);
-          return;
-        }
-
-        // 2. Proceed with Supabase Auth SignUp
+        // Proceed with Supabase Auth SignUp
         const { data, error } = await supabase.auth.signUp({
           email: email.trim().toLowerCase(),
           password,
@@ -85,19 +71,11 @@ export default function LoginPage() {
         if (error) {
           setErrorMsg(error.message);
         } else {
-          setInfoMsg('Verification email sent or account created! Please log in.');
+          setInfoMsg('Account created successfully! Please log in.');
           setIsSignUp(false);
         }
       } else {
         // Log In
-        // 1. Verify if the email is allowed BEFORE signing in
-        const allowed = await checkAllowedUser(email.trim().toLowerCase());
-        if (!allowed) {
-          setErrorMsg('Access Denied. You do not have permissions for this notebook.');
-          setActionLoading(false);
-          return;
-        }
-
         const { error } = await supabase.auth.signInWithPassword({
           email: email.trim().toLowerCase(),
           password,
@@ -241,7 +219,7 @@ export default function LoginPage() {
                   <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#8b5a2b]/60" />
                   <input
                     type="email"
-                    placeholder="you@allowed.com"
+                    placeholder="you@domain.com"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     className="w-full pl-9 pr-3 py-2 bg-white/60 border border-[#e5dcd0] rounded focus:outline-none focus:ring-1 focus:ring-[#8b5a2b] font-serif text-sm"
@@ -275,7 +253,7 @@ export default function LoginPage() {
                 ) : (
                   <>
                     <BookOpen className="h-4 w-4" />
-                    <span>{isSignUp ? 'Register & Turn Page' : 'Open Notebook'}</span>
+                    <span>{isSignUp ? 'Register & Open Cover' : 'Open Notebook'}</span>
                   </>
                 )}
               </button>
@@ -333,7 +311,7 @@ export default function LoginPage() {
             <span className="font-serif italic">
               {isDemoMode 
                 ? 'Running in Offline Demo Mode. Try clicking one of the preset accounts above!'
-                : 'This notebook is strictly private. Only the two allowed email addresses may enter.'}
+                : 'Enter your credentials to unlock your shared scrapbook.'}
             </span>
           </div>
 
