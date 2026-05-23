@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronLeft, ChevronRight, BookOpen, LogOut } from 'lucide-react';
 import PageComponent from './PageComponent';
@@ -28,6 +28,7 @@ export default function NotebookBook({ entries, onRefresh }: NotebookBookProps) 
   const [currentPageIndex, setCurrentPageIndex] = useState(0); // For mobile
   const [currentSpreadIndex, setCurrentSpreadIndex] = useState(0); // For desktop
   const [direction, setDirection] = useState<'next' | 'prev'>('next');
+  const prevEntriesLength = useRef(entries.length);
 
   // Detect screen size
   useEffect(() => {
@@ -56,17 +57,9 @@ export default function NotebookBook({ entries, onRefresh }: NotebookBookProps) 
 
   const totalSpreads = Math.ceil(pages.length / 2);
 
-  // Jump to the end (new page form) when an entry is successfully added
+  // Refresh entries on success
   const handleSuccess = () => {
     onRefresh();
-    // After refetching, wait a moment and then navigate to the last spread/page
-    setTimeout(() => {
-      if (isMobile) {
-        setCurrentPageIndex(pages.length - 1);
-      } else {
-        setCurrentSpreadIndex(totalSpreads - 1);
-      }
-    }, 300);
   };
 
   const handleNext = () => {
@@ -95,7 +88,7 @@ export default function NotebookBook({ entries, onRefresh }: NotebookBookProps) 
     }
   };
 
-  // Keep navigation in bounds on window resizing / entries length changes
+  // Keep navigation in bounds on window resizing
   useEffect(() => {
     if (isMobile) {
       // sync spread index to page index
@@ -107,6 +100,30 @@ export default function NotebookBook({ entries, onRefresh }: NotebookBookProps) 
       setCurrentSpreadIndex(Math.min(targetSpread, totalSpreads - 1));
     }
   }, [isMobile]);
+
+  // Handle automatic page flip when entries list length changes
+  useEffect(() => {
+    const pagesCount = entries.length === 0 ? 2 : entries.length + 1 + ((entries.length + 1) % 2 === 0 ? 0 : 1);
+    const spreadsCount = Math.ceil(pagesCount / 2);
+
+    if (entries.length > prevEntriesLength.current) {
+      // Entry was added! Navigate to the end
+      setDirection('next');
+      if (isMobile) {
+        setCurrentPageIndex(pagesCount - 1);
+      } else {
+        setCurrentSpreadIndex(spreadsCount - 1);
+      }
+    } else if (entries.length < prevEntriesLength.current) {
+      // Entry was deleted! Adjust index if out of bounds
+      if (isMobile) {
+        setCurrentPageIndex(prev => Math.min(prev, pagesCount - 1));
+      } else {
+        setCurrentSpreadIndex(prev => Math.min(prev, spreadsCount - 1));
+      }
+    }
+    prevEntriesLength.current = entries.length;
+  }, [entries.length, isMobile]);
 
   // Framer Motion Animation Variants for page transitions
   const pageVariants: any = {
