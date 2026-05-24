@@ -6,6 +6,7 @@ import { useAuth } from '@/context/AuthContext';
 import { supabase, isDemoMode } from '@/lib/supabase';
 import NotebookBook from '@/components/NotebookBook';
 import { BookOpen, Sparkles, Heart, Key, Share2, Clipboard, Check } from 'lucide-react';
+import { decryptContent } from '@/lib/crypto';
 
 interface NotebookEntry {
   id: string;
@@ -23,6 +24,14 @@ export default function HomePage() {
   const [fetching, setFetching] = useState(true);
   const [setupLoading, setSetupLoading] = useState(false);
   const [setupError, setSetupError] = useState('');
+
+  // E2EE States
+  const [notebookKey, setNotebookKey] = useState<string | null>(null);
+  const [createPassword, setCreatePassword] = useState('');
+  const [joinPassword, setJoinPassword] = useState('');
+  const [unlockPassword, setUnlockPassword] = useState('');
+  const [unlockError, setUnlockError] = useState('');
+  const [unlockLoading, setUnlockLoading] = useState(false);
   
   // Setup inputs
   const [newNotebookName, setNewNotebookName] = useState('Our Story');
@@ -49,16 +58,36 @@ export default function HomePage() {
     }
   }, [user, router]);
 
+  // Load notebook key from localStorage when notebookId changes
+  useEffect(() => {
+    if (notebookId) {
+      const key = localStorage.getItem(`notebook_key_${notebookId}`);
+      setNotebookKey(key);
+    } else {
+      setNotebookKey(null);
+    }
+  }, [notebookId]);
+
   // Fetch notebook entries
   const fetchEntries = useCallback(async () => {
     if (!user || !notebookId) return;
+
+    const key = localStorage.getItem(`notebook_key_${notebookId}`) || '';
 
     if (isDemoMode) {
       const mockEntriesStr = localStorage.getItem('mock_notebook_entries') || '[]';
       const mockEntries = JSON.parse(mockEntriesStr);
       // Filter entries belonging to this specific notebook
       const filtered = mockEntries.filter((e: any) => e.notebook_id === notebookId);
-      setEntries(filtered);
+      
+      const decrypted = await Promise.all(
+        filtered.map(async (e: any) => {
+          const dec = await decryptContent(e.content, key);
+          return { ...e, content: dec };
+        })
+      );
+
+      setEntries(decrypted);
       setFetching(false);
       return;
     }
@@ -73,7 +102,13 @@ export default function HomePage() {
       if (error) {
         console.error('Error fetching notebook entries:', error);
       } else {
-        setEntries(data || []);
+        const decrypted = await Promise.all(
+          (data || []).map(async (e: any) => {
+            const dec = await decryptContent(e.content, key);
+            return { ...e, content: dec };
+          })
+        );
+        setEntries(decrypted);
       }
     } catch (err) {
       console.error('Failed to fetch entries:', err);
@@ -182,7 +217,7 @@ export default function HomePage() {
   // Handle notebook creation
   const handleCreateNotebook = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newNotebookName.trim() || !user) return;
+    if (!newNotebookName.trim() || !user || !createPassword.trim()) return;
 
     setSetupLoading(true);
     setSetupError('');
@@ -218,6 +253,10 @@ export default function HomePage() {
         });
         localStorage.setItem('mock_notebook_members', JSON.stringify(mockMembers));
 
+        // Save key locally
+        localStorage.setItem(`notebook_key_${generatedId}`, createPassword.trim());
+        setNotebookKey(createPassword.trim());
+
         // 3. Update auth state
         setMockNotebookId(generatedId);
       } else {
@@ -242,6 +281,10 @@ export default function HomePage() {
 
         if (mError) throw mError;
 
+        // Save key locally
+        localStorage.setItem(`notebook_key_${notebook.id}`, createPassword.trim());
+        setNotebookKey(createPassword.trim());
+
         // 3. Refresh Auth State
         await refreshNotebookId();
       }
@@ -256,7 +299,7 @@ export default function HomePage() {
   // Handle notebook joining
   const handleJoinNotebook = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inviteCodeInput.trim() || !user) return;
+    if (!inviteCodeInput.trim() || !user || !joinPassword.trim()) return;
 
     setSetupLoading(true);
     setSetupError('');
@@ -297,6 +340,10 @@ export default function HomePage() {
         });
         localStorage.setItem('mock_notebook_members', JSON.stringify(mockMembers));
 
+        // Save key locally
+        localStorage.setItem(`notebook_key_${targetNotebook.id}`, joinPassword.trim());
+        setNotebookKey(joinPassword.trim());
+
         // Save active notebook
         setMockNotebookId(targetNotebook.id);
         
@@ -335,6 +382,10 @@ export default function HomePage() {
             throw mError;
           }
         } else {
+          // Save key locally
+          localStorage.setItem(`notebook_key_${notebook.id}`, joinPassword.trim());
+          setNotebookKey(joinPassword.trim());
+
           // 3. Refresh Auth state
           await refreshNotebookId();
         }
@@ -344,6 +395,41 @@ export default function HomePage() {
       setSetupError(err.message || 'Could not join notebook. Please try again.');
     } finally {
       setSetupLoading(false);
+    }
+  };
+
+  // Handle notebook unlocking
+  const handleUnlockNotebook = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!unlockPassword.trim()) return;
+
+    setUnlockLoading(true);
+    setUnlockError('');
+
+    try {
+      // Find the first encrypted entry to verify password
+      const encryptedEntry = entries.find((entry) => entry.content.startsWith('ENC:'));
+      
+      if (encryptedEntry) {
+        const decrypted = await decryptContent(encryptedEntry.content, unlockPassword.trim());
+        if (decrypted.includes('[Encrypted - Decryption Failed')) {
+          setUnlockError('Geçersiz şifre. Lütfen partnerinizin belirlediği doğru şifreyi girdiğinizden emin olun.');
+          setUnlockLoading(false);
+          return;
+        }
+      }
+
+      // Save key locally
+      localStorage.setItem(`notebook_key_${notebookId}`, unlockPassword.trim());
+      setNotebookKey(unlockPassword.trim());
+
+      // Trigger fetch again to decrypt all entries
+      await fetchEntries();
+    } catch (err) {
+      console.error('Failed to unlock notebook:', err);
+      setUnlockError('An error occurred during unlocking. Please try again.');
+    } finally {
+      setUnlockLoading(false);
     }
   };
 
@@ -450,9 +536,9 @@ export default function HomePage() {
 
                 {/* Option 1: Create Notebook */}
                 <form onSubmit={handleCreateNotebook} className="space-y-3">
-                  <div>
+                  <div className="space-y-2">
                     <h4 className="font-serif font-bold text-sm text-[#5c3e21] uppercase tracking-wider mb-1">Option A: Create a Notebook</h4>
-                    <p className="text-[11px] text-[#8b5a2b]/80 font-serif italic mb-2">Create a new book and invite your partner.</p>
+                    <p className="text-[11px] text-[#8b5a2b]/80 font-serif italic">Create a new book and invite your partner.</p>
                     <input
                       type="text"
                       placeholder="Notebook Name (e.g. Our Story)"
@@ -462,6 +548,18 @@ export default function HomePage() {
                       disabled={setupLoading}
                       required
                     />
+                    <input
+                      type="password"
+                      placeholder="Set Sanctuary Password (E2EE)"
+                      value={createPassword}
+                      onChange={(e) => setCreatePassword(e.target.value)}
+                      className="w-full px-3 py-2 bg-white/60 border border-[#e5dcd0] rounded focus:outline-none focus:ring-1 focus:ring-[#8b5a2b] font-body text-sm"
+                      disabled={setupLoading}
+                      required
+                    />
+                    <p className="text-[9px] text-[#8b5a2b]/60 italic font-serif leading-none">
+                      * Bu şifre uçtan uca şifreleme için kullanılır ve sunucuya gönderilmez. Kaybetmeyin!
+                    </p>
                   </div>
                   <button
                     type="submit"
@@ -480,9 +578,9 @@ export default function HomePage() {
 
                 {/* Option 2: Join Notebook */}
                 <form onSubmit={handleJoinNotebook} className="space-y-3">
-                  <div>
+                  <div className="space-y-2">
                     <h4 className="font-serif font-bold text-sm text-[#5c3e21] uppercase tracking-wider mb-1">Option B: Join Existing Book</h4>
-                    <p className="text-[11px] text-[#8b5a2b]/80 font-serif italic mb-2">Enter the invite code shared by your partner.</p>
+                    <p className="text-[11px] text-[#8b5a2b]/80 font-serif italic">Enter the invite code shared by your partner.</p>
                     <div className="relative">
                       <Key className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#8b5a2b]/50" />
                       <input
@@ -495,6 +593,15 @@ export default function HomePage() {
                         required
                       />
                     </div>
+                    <input
+                      type="password"
+                      placeholder="Enter Sanctuary Password"
+                      value={joinPassword}
+                      onChange={(e) => setJoinPassword(e.target.value)}
+                      className="w-full px-3 py-2 bg-white/60 border border-[#e5dcd0] rounded focus:outline-none focus:ring-1 focus:ring-[#8b5a2b] font-body text-sm"
+                      disabled={setupLoading}
+                      required
+                    />
                   </div>
                   <button
                     type="submit"
@@ -514,7 +621,101 @@ export default function HomePage() {
     );
   }
 
-  // 3. Main book dashboard
+  // 3. Unlock Sanctuary screen (Notebook membership exists, but key is missing in localStorage)
+  if (user && notebookId !== null && !notebookKey) {
+    return (
+      <main className="min-h-screen w-full flex flex-col justify-center items-center py-8 relative bg-[#12100e] overflow-y-auto">
+        <div className="absolute inset-0 bg-[radial-gradient(#1e1814_1px,transparent_1px)] [background-size:32px_32px] opacity-40 pointer-events-none" />
+        
+        {/* Header bar above setup */}
+        <div className="w-full max-w-md flex justify-between items-center mb-6 text-[#faf5eb] px-6">
+          <div className="flex items-center gap-2">
+            <BookOpen className="h-6 w-6 text-[#d9a05b]" />
+            <h2 className="font-serif italic text-xl tracking-wider text-[#d9a05b]">Our Digital Sanctuary</h2>
+          </div>
+          <button
+            onClick={signOut}
+            className="px-3 py-1.5 bg-red-950/20 hover:bg-red-950/40 border border-red-900/30 text-red-400 text-xs font-bold rounded-full transition cursor-pointer"
+          >
+            Sign Out
+          </button>
+        </div>
+
+        {/* Notebook Leather Cover Container */}
+        <div 
+          className="w-full max-w-md bg-[#2a1b10] rounded-2xl p-5 border-4 border-[#5c3e21] shadow-[0_30px_70px_-10px_rgba(0,0,0,0.8)] relative"
+          style={{ perspective: '1500px' }}
+        >
+          {/* Gold border inset */}
+          <div className="absolute inset-2 border border-[#d9a05b]/20 rounded-xl pointer-events-none" />
+
+          {/* Book Inner Page Container */}
+          <div className="relative min-h-[400px] rounded-lg overflow-hidden flex flex-col bg-[#fbf8f3] p-8 md:p-10 shadow-inner">
+            <div className="absolute top-4 left-4 w-4 h-4 border-t border-l border-[#8b5a2b]/30" />
+            <div className="absolute top-4 right-4 w-4 h-4 border-t border-r border-[#8b5a2b]/30" />
+            <div className="absolute bottom-4 left-4 w-4 h-4 border-b border-l border-[#8b5a2b]/30" />
+            <div className="absolute bottom-4 right-4 w-4 h-4 border-b border-r border-[#8b5a2b]/30" />
+
+            <div className="my-auto space-y-6 flex flex-col">
+              <div className="text-center">
+                <div className="inline-flex p-3 rounded-full bg-[#8b5a2b]/10 border border-[#8b5a2b]/20 mb-4">
+                  <Key className="h-8 w-8 text-[#8b5a2b]" />
+                </div>
+                
+                <h3 className="font-serif text-2xl font-bold text-[#5c3e21] tracking-wide">
+                  Unlock Sanctuary
+                </h3>
+                
+                <p className="font-body italic text-sm leading-relaxed text-[#5c3e21]/80 mt-2">
+                  This notebook is encrypted end-to-end. Please enter your shared Sanctuary Password to unlock the memories.
+                </p>
+              </div>
+
+              {unlockError && (
+                <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-xs flex items-start gap-2 font-serif italic">
+                  <ShieldAlert className="h-4 w-4 shrink-0 mt-0.5" />
+                  <span>{unlockError}</span>
+                </div>
+              )}
+
+              <form onSubmit={handleUnlockNotebook} className="space-y-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-[#5c3e21]/70 uppercase tracking-wider block">
+                    Sanctuary Password
+                  </label>
+                  <input
+                    type="password"
+                    placeholder="Enter passphrase"
+                    value={unlockPassword}
+                    onChange={(e) => setUnlockPassword(e.target.value)}
+                    className="w-full px-3 py-2 bg-white border border-[#e5dcd0] rounded focus:outline-none focus:ring-1 focus:ring-[#8b5a2b] font-body text-sm"
+                    disabled={unlockLoading}
+                    required
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={unlockLoading}
+                  className="w-full py-2 bg-[#5c3e21] hover:bg-[#483019] text-[#faf5eb] font-serif font-bold text-xs rounded transition shadow flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  {unlockLoading ? 'Unlocking...' : <><Sparkles className="h-3.5 w-3.5" /><span>Unlock Sanctuary</span></>}
+                </button>
+              </form>
+
+              <div className="h-[1px] w-24 bg-gradient-to-r from-transparent via-[#8b5a2b]/30 to-transparent mx-auto" />
+
+              <p className="text-[10px] text-center text-[#8b5a2b]/60 font-serif italic">
+                * Bu şifre tarayıcınızda yerel olarak saklanır ve veritabanına asla gönderilmez.
+              </p>
+            </div>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
+  // 4. Main book dashboard
   return (
     <main className="min-h-screen w-full flex flex-col justify-center items-center py-8 relative bg-[#12100e] overflow-y-auto">
       {/* Decorative wood grain background */}

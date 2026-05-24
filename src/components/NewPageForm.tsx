@@ -5,6 +5,7 @@ import { supabase, isDemoMode } from '@/lib/supabase';
 import { uploadImage } from '@/lib/storage';
 import { Image as ImageIcon, X, Send } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
+import { encryptContent } from '@/lib/crypto';
 
 interface NewPageFormProps {
   onSuccess: () => void;
@@ -163,6 +164,14 @@ export default function NewPageForm({ onSuccess, pageNumber, notebookId }: NewPa
         );
       }
 
+      // Read key from localStorage
+      const key = localStorage.getItem(`notebook_key_${notebookId}`) || '';
+      if (!key) {
+        throw new Error('Şifreleme anahtarı bulunamadı. Lütfen defter kilidini açın.');
+      }
+
+      const encryptedText = await encryptContent(content.trim(), key);
+
       if (isDemoMode) {
         const mockEntriesStr = localStorage.getItem('mock_notebook_entries') || '[]';
         const mockEntries = JSON.parse(mockEntriesStr);
@@ -171,7 +180,7 @@ export default function NewPageForm({ onSuccess, pageNumber, notebookId }: NewPa
           notebook_id: notebookId,
           author_id: user?.id || 'mock-user-1',
           author_email: userEmail,
-          content: content.trim(),
+          content: encryptedText,
           image_url: imagePath || null,
           page_number: mockEntries.length + 1,
           created_at: new Date().toISOString(),
@@ -185,7 +194,7 @@ export default function NewPageForm({ onSuccess, pageNumber, notebookId }: NewPa
             notebook_id: notebookId,
             author_id: user.id,
             author_email: userEmail,
-            content: content.trim(),
+            content: encryptedText,
             image_url: imagePath || null,
           }),
           20000,
