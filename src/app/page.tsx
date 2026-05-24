@@ -185,6 +185,7 @@ export default function HomePage() {
             event: '*',
             schema: 'public',
             table: 'notebook_entries',
+            filter: `notebook_id=eq.${notebookId}`,
           },
           () => {
             fetchEntries();
@@ -196,6 +197,7 @@ export default function HomePage() {
             event: '*',
             schema: 'public',
             table: 'notebook_members',
+            filter: `notebook_id=eq.${notebookId}`,
           },
           () => {
             checkPairingStatus();

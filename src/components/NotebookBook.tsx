@@ -27,6 +27,16 @@ export default function NotebookBook({ entries, onRefresh, notebookId }: Noteboo
   const [currentSpreadIndex, setCurrentSpreadIndex] = useState(0); // For desktop
   const [direction, setDirection] = useState<'next' | 'prev'>('next');
   const prevEntriesLength = useRef(entries.length);
+  const currentPageIndexRef = useRef(0);
+  const currentSpreadIndexRef = useRef(0);
+
+  useEffect(() => {
+    currentPageIndexRef.current = currentPageIndex;
+  }, [currentPageIndex]);
+
+  useEffect(() => {
+    currentSpreadIndexRef.current = currentSpreadIndex;
+  }, [currentSpreadIndex]);
 
   // Detect screen size
   useEffect(() => {
@@ -63,26 +73,18 @@ export default function NotebookBook({ entries, onRefresh, notebookId }: Noteboo
   const handleNext = () => {
     setDirection('next');
     if (isMobile) {
-      if (currentPageIndex < pages.length - 1) {
-        setCurrentPageIndex(currentPageIndex + 1);
-      }
+      setCurrentPageIndex((prev) => Math.min(prev + 1, pages.length - 1));
     } else {
-      if (currentSpreadIndex < totalSpreads - 1) {
-        setCurrentSpreadIndex(currentSpreadIndex + 1);
-      }
+      setCurrentSpreadIndex((prev) => Math.min(prev + 1, totalSpreads - 1));
     }
   };
 
   const handlePrev = () => {
     setDirection('prev');
     if (isMobile) {
-      if (currentPageIndex > 0) {
-        setCurrentPageIndex(currentPageIndex - 1);
-      }
+      setCurrentPageIndex((prev) => Math.max(prev - 1, 0));
     } else {
-      if (currentSpreadIndex > 0) {
-        setCurrentSpreadIndex(currentSpreadIndex - 1);
-      }
+      setCurrentSpreadIndex((prev) => Math.max(prev - 1, 0));
     }
   };
 
@@ -90,14 +92,14 @@ export default function NotebookBook({ entries, onRefresh, notebookId }: Noteboo
   useEffect(() => {
     if (isMobile) {
       // sync spread index to page index
-      const targetPage = currentSpreadIndex * 2;
+      const targetPage = currentSpreadIndexRef.current * 2;
       window.setTimeout(() => setCurrentPageIndex(Math.min(targetPage, pages.length - 1)), 0);
     } else {
       // sync page index to spread index
-      const targetSpread = Math.floor(currentPageIndex / 2);
+      const targetSpread = Math.floor(currentPageIndexRef.current / 2);
       window.setTimeout(() => setCurrentSpreadIndex(Math.min(targetSpread, totalSpreads - 1)), 0);
     }
-  }, [isMobile, currentSpreadIndex, currentPageIndex, pages.length, totalSpreads]);
+  }, [isMobile, pages.length, totalSpreads]);
 
   // Handle automatic page flip when entries list length changes
   useEffect(() => {
