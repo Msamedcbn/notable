@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useRef } from 'react';
+import Image from 'next/image';
 import { supabase, isDemoMode } from '@/lib/supabase';
 import { uploadImage } from '@/lib/storage';
 import { Image as ImageIcon, X, Send } from 'lucide-react';
@@ -14,6 +15,7 @@ interface NewPageFormProps {
 }
 
 export default function NewPageForm({ onSuccess, pageNumber, notebookId }: NewPageFormProps) {
+  void pageNumber;
   const { user } = useAuth();
   const [content, setContent] = useState('');
   const [imageFile, setImageFile] = useState<File | null>(null);
@@ -37,6 +39,34 @@ export default function NewPageForm({ onSuccess, pageNumber, notebookId }: NewPa
           reject(error);
         });
     });
+  };
+
+  const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
+  const shouldRetry = (error: unknown) => {
+    if (!(error instanceof Error)) return false;
+    const message = error.message.toLowerCase();
+    return (
+      message.includes('timed out') ||
+      message.includes('network') ||
+      message.includes('fetch') ||
+      message.includes('failed to fetch') ||
+      message.includes('temporarily')
+    );
+  };
+
+  const runWithRetry = async <T,>(task: () => Promise<T>, attempts: number, label: string): Promise<T> => {
+    let lastError: unknown = null;
+    for (let i = 0; i < attempts; i++) {
+      try {
+        return await task();
+      } catch (error) {
+        lastError = error;
+        if (i === attempts - 1 || !shouldRetry(error)) break;
+        await sleep(350 * (i + 1));
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error(`${label} failed. Please try again.`);
   };
 
   const compressImageForUpload = async (file: File): Promise<File> => {
@@ -167,7 +197,7 @@ export default function NewPageForm({ onSuccess, pageNumber, notebookId }: NewPa
       // Read key from localStorage
       const key = localStorage.getItem(`notebook_key_${notebookId}`) || '';
       if (!key) {
-        throw new Error('Şifreleme anahtarı bulunamadı. Lütfen defter kilidini açın.');
+        throw new Error('Encryption key is missing. Please unlock the notebook again.');
       }
 
       const encryptedText = await encryptContent(content.trim(), key);
@@ -189,15 +219,24 @@ export default function NewPageForm({ onSuccess, pageNumber, notebookId }: NewPa
         localStorage.setItem('mock_notebook_entries', JSON.stringify(mockEntries));
       } else {
         // Insert notebook entry
-        const insertResult = await withTimeout<{ error: { message?: string } | null }>(
-          supabase.from('notebook_entries').insert({
-            notebook_id: notebookId,
-            author_id: user.id,
-            author_email: userEmail,
-            content: encryptedText,
-            image_url: imagePath || null,
-          }),
-          20000,
+        const insertResult = await runWithRetry(
+          () =>
+            withTimeout(
+              supabase
+                .from('notebook_entries')
+                .insert({
+                  notebook_id: notebookId,
+                  author_id: user.id,
+                  author_email: userEmail,
+                  content: encryptedText,
+                  image_url: imagePath || null,
+                })
+                .select('id')
+                .single(),
+              45000,
+              'Saving message'
+            ),
+          3,
           'Saving message'
         );
         const { error } = insertResult;
@@ -211,9 +250,19 @@ export default function NewPageForm({ onSuccess, pageNumber, notebookId }: NewPa
       setContent('');
       removeImage();
       onSuccess();
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Error adding entry:', err);
-      setErrorMsg(err.message || 'Failed to write page. Please try again.');
+      const message = err instanceof Error ? err.message : 'Failed to write page. Please try again.';
+      const normalized = message.toLowerCase();
+      if (
+        normalized.includes('mesaj içeriği uygun değildir') ||
+        normalized.includes('mesaj icerigi uygun degildir') ||
+        normalized.includes('content is not appropriate')
+      ) {
+        setErrorMsg('Database content filter blocked this message. Apply the latest Supabase migration and try again.');
+      } else {
+        setErrorMsg(message);
+      }
     } finally {
       setLoading(false);
     }
@@ -249,6 +298,10 @@ export default function NewPageForm({ onSuccess, pageNumber, notebookId }: NewPa
               value={content}
               onChange={(e) => setContent(e.target.value)}
               placeholder="Dear other half, I wanted to tell you..."
+              autoCorrect="off"
+              autoCapitalize="off"
+              spellCheck={false}
+              translate="no"
               className="w-full flex-1 p-4 bg-white/40 border border-[#e8dfd0] rounded-lg focus:outline-none focus:ring-1 focus:ring-[#8b5a2b]/50 focus:border-[#8b5a2b]/50 font-body italic text-base leading-relaxed resize-none text-[#2d2621] placeholder-[#8b5a2b]/40 shadow-inner"
               style={{
                 backgroundImage: 'linear-gradient(rgba(0,0,0,0.01) 1px, transparent 1px)',
@@ -261,11 +314,16 @@ export default function NewPageForm({ onSuccess, pageNumber, notebookId }: NewPa
           <div className="relative">
             {imagePreview ? (
               <div className="relative rounded-lg overflow-hidden border border-[#e8dfd0] shadow-sm bg-white/40 p-2">
-                <img
-                  src={imagePreview}
-                  alt="Upload preview"
-                  className="w-full h-32 object-cover rounded"
-                />
+                <div className="relative w-full h-32">
+                  <Image
+                    src={imagePreview}
+                    alt="Upload preview"
+                    fill
+                    unoptimized
+                    sizes="100vw"
+                    className="object-cover rounded"
+                  />
+                </div>
                 <button
                   type="button"
                   onClick={removeImage}

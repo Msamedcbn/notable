@@ -1,5 +1,7 @@
 // Client-side encryption utility using browser Web Crypto API (AES-GCM)
 export const ENCRYPTION_PREFIX = 'ENC:';
+export const LOCKED_CONTENT_MARKER = '[LOCKED_CONTENT]';
+export const DECRYPTION_FAILED_MARKER = '[DECRYPTION_FAILED]';
 
 // Helper to convert string to BufferSource
 const getBytes = (text: string): BufferSource => new TextEncoder().encode(text) as unknown as BufferSource;
@@ -36,7 +38,7 @@ async function deriveKey(password: string, salt: Uint8Array): Promise<CryptoKey>
   return window.crypto.subtle.deriveKey(
     {
       name: 'PBKDF2',
-      salt: salt as any,
+      salt,
       iterations: 100000,
       hash: 'SHA-256',
     },
@@ -63,7 +65,7 @@ export async function encryptContent(text: string, secret: string): Promise<stri
     const encryptedBuffer = await window.crypto.subtle.encrypt(
       {
         name: 'AES-GCM',
-        iv: iv as any,
+        iv,
       },
       key,
       getBytes(text)
@@ -93,7 +95,7 @@ export async function decryptContent(encryptedText: string, secret: string): Pro
   }
 
   if (!secret) {
-    return '[Locked - Set Sanctuary Password]';
+    return LOCKED_CONTENT_MARKER;
   }
 
   try {
@@ -109,15 +111,15 @@ export async function decryptContent(encryptedText: string, secret: string): Pro
     const decryptedBuffer = await window.crypto.subtle.decrypt(
       {
         name: 'AES-GCM',
-        iv: iv as any,
+        iv,
       },
       key,
-      ciphertext as any
+      ciphertext
     );
 
     return getString(decryptedBuffer);
   } catch (error) {
     console.error('Decryption failed:', error);
-    return '[Encrypted - Decryption Failed (Incorrect password?)]';
+    return DECRYPTION_FAILED_MARKER;
   }
 }

@@ -6,22 +6,19 @@ import { ChevronLeft, ChevronRight, BookOpen, LogOut } from 'lucide-react';
 import PageComponent from './PageComponent';
 import NewPageForm from './NewPageForm';
 import { useAuth } from '@/context/AuthContext';
-
-interface NotebookEntry {
-  id: string;
-  author_id: string;
-  author_email: string;
-  content: string;
-  image_url: string | null;
-  page_number: number;
-  created_at: string;
-}
+import { NotebookEntry } from '@/lib/types';
 
 interface NotebookBookProps {
   entries: NotebookEntry[];
   onRefresh: () => void;
   notebookId: string;
 }
+
+type NotebookPage =
+  | { type: 'welcome'; pageNumber: number }
+  | { type: 'form'; pageNumber: number }
+  | { type: 'back-cover'; pageNumber: number }
+  | { type: 'entry'; pageNumber: number; entry: NotebookEntry };
 
 export default function NotebookBook({ entries, onRefresh, notebookId }: NotebookBookProps) {
   const { user, signOut } = useAuth();
@@ -42,7 +39,7 @@ export default function NotebookBook({ entries, onRefresh, notebookId }: Noteboo
   }, []);
 
   // Build the page array
-  const pages: any[] = [];
+  const pages: NotebookPage[] = [];
   if (entries.length === 0) {
     pages.push({ type: 'welcome', pageNumber: 1 });
     pages.push({ type: 'form', pageNumber: 2 });
@@ -94,13 +91,13 @@ export default function NotebookBook({ entries, onRefresh, notebookId }: Noteboo
     if (isMobile) {
       // sync spread index to page index
       const targetPage = currentSpreadIndex * 2;
-      setCurrentPageIndex(Math.min(targetPage, pages.length - 1));
+      window.setTimeout(() => setCurrentPageIndex(Math.min(targetPage, pages.length - 1)), 0);
     } else {
       // sync page index to spread index
       const targetSpread = Math.floor(currentPageIndex / 2);
-      setCurrentSpreadIndex(Math.min(targetSpread, totalSpreads - 1));
+      window.setTimeout(() => setCurrentSpreadIndex(Math.min(targetSpread, totalSpreads - 1)), 0);
     }
-  }, [isMobile]);
+  }, [isMobile, currentSpreadIndex, currentPageIndex, pages.length, totalSpreads]);
 
   // Handle automatic page flip when entries list length changes
   useEffect(() => {
@@ -109,25 +106,25 @@ export default function NotebookBook({ entries, onRefresh, notebookId }: Noteboo
 
     if (entries.length > prevEntriesLength.current) {
       // Entry was added! Navigate to the end
-      setDirection('next');
+      window.setTimeout(() => setDirection('next'), 0);
       if (isMobile) {
-        setCurrentPageIndex(pagesCount - 1);
+        window.setTimeout(() => setCurrentPageIndex(pagesCount - 1), 0);
       } else {
-        setCurrentSpreadIndex(spreadsCount - 1);
+        window.setTimeout(() => setCurrentSpreadIndex(spreadsCount - 1), 0);
       }
     } else if (entries.length < prevEntriesLength.current) {
       // Entry was deleted! Adjust index if out of bounds
       if (isMobile) {
-        setCurrentPageIndex(prev => Math.min(prev, pagesCount - 1));
+        window.setTimeout(() => setCurrentPageIndex(prev => Math.min(prev, pagesCount - 1)), 0);
       } else {
-        setCurrentSpreadIndex(prev => Math.min(prev, spreadsCount - 1));
+        window.setTimeout(() => setCurrentSpreadIndex(prev => Math.min(prev, spreadsCount - 1)), 0);
       }
     }
     prevEntriesLength.current = entries.length;
   }, [entries.length, isMobile]);
 
   // Framer Motion Animation Variants for page transitions
-  const pageVariants: any = {
+  const pageVariants = {
     initial: (dir: 'next' | 'prev') => ({
       rotateY: dir === 'next' ? 45 : -45,
       opacity: 0,
@@ -156,12 +153,13 @@ export default function NotebookBook({ entries, onRefresh, notebookId }: Noteboo
   };
 
   // Helper render to avoid duplicates
-  const renderPage = (pageItem: any) => {
+  const renderPage = (pageItem: NotebookPage | undefined) => {
     if (!pageItem) return null;
+    const entry = pageItem.type === 'entry' ? pageItem.entry : undefined;
     return (
       <PageComponent
         type={pageItem.type}
-        entry={pageItem.entry}
+        entry={entry}
         pageNumber={pageItem.pageNumber}
         onDelete={onRefresh}
         formComponent={

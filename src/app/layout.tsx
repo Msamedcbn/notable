@@ -21,6 +21,9 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: "Our Shared Digital Notebook",
   description: "A private, shared scrapbook and diary for two.",
+  other: {
+    google: "notranslate",
+  },
 };
 
 export default function RootLayout({
@@ -31,6 +34,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
+      translate="no"
       className={`${playfair.variable} ${lora.variable} ${inter.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col bg-[#181614] text-[#2c2a29] font-sans">

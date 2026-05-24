@@ -8,7 +8,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Mail, Lock, BookOpen, User, ShieldAlert, Sparkles, Heart } from 'lucide-react';
 
 export default function LoginPage() {
-  const { user, notebookId, loading, signInMockUser } = useAuth();
+  const { user, loading, signInMockUser } = useAuth();
   const [isSignUp, setIsSignUp] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -58,7 +58,7 @@ export default function LoginPage() {
         }
 
         // Proceed with Supabase Auth SignUp
-        const { data, error } = await supabase.auth.signUp({
+        const { error } = await supabase.auth.signUp({
           email: email.trim().toLowerCase(),
           password,
           options: {
@@ -87,8 +87,9 @@ export default function LoginPage() {
           router.push('/');
         }
       }
-    } catch (err: any) {
-      setErrorMsg(err.message || 'An unexpected error occurred.');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'An unexpected error occurred.';
+      setErrorMsg(message);
     } finally {
       setActionLoading(false);
     }

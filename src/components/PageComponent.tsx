@@ -1,20 +1,13 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
+import Image from 'next/image';
 import { getSignedImageUrl } from '@/lib/storage';
 import { Trash2, Heart, Calendar, User, Sparkles } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { supabase, isDemoMode } from '@/lib/supabase';
-
-interface NotebookEntry {
-  id: string;
-  author_id: string;
-  author_email: string;
-  content: string;
-  image_url: string | null;
-  page_number: number;
-  created_at: string;
-}
+import { NotebookEntry } from '@/lib/types';
+import { DECRYPTION_FAILED_MARKER, LOCKED_CONTENT_MARKER } from '@/lib/crypto';
 
 interface PageComponentProps {
   type: 'welcome' | 'entry' | 'form' | 'back-cover';
@@ -45,7 +38,7 @@ export default function PageComponent({
         isMounted = false;
       };
     } else {
-      setSignedUrl(null);
+      window.setTimeout(() => setSignedUrl(null), 0);
     }
   }, [type, entry?.image_url]);
 
@@ -57,8 +50,8 @@ export default function PageComponent({
     try {
       if (isDemoMode) {
         const mockEntriesStr = localStorage.getItem('mock_notebook_entries') || '[]';
-        let mockEntries = JSON.parse(mockEntriesStr);
-        mockEntries = mockEntries.filter((e: any) => e.id !== entry.id);
+        let mockEntries: NotebookEntry[] = JSON.parse(mockEntriesStr);
+        mockEntries = mockEntries.filter((e) => e.id !== entry.id);
         localStorage.setItem('mock_notebook_entries', JSON.stringify(mockEntries));
         if (onDelete) onDelete();
         return;
@@ -102,6 +95,13 @@ export default function PageComponent({
 
   const getAuthorDisplay = (email: string) => {
     return email.split('@')[0];
+  };
+
+  const getDisplayContent = (content: string) => {
+    if (content === DECRYPTION_FAILED_MARKER || content === LOCKED_CONTENT_MARKER) {
+      return 'This page is encrypted. Enter the correct Sanctuary Password to read it.';
+    }
+    return content;
   };
 
   if (type === 'welcome') {
@@ -219,11 +219,16 @@ export default function PageComponent({
       <div className="flex-1 flex flex-col gap-4 overflow-y-auto pr-1 pb-4 min-h-0">
         {signedUrl && (
           <div className="w-full relative rounded-lg overflow-hidden border border-[#e8dfd0] shadow-sm bg-white/50 p-2 shrink-0">
-            <img
-              src={signedUrl}
-              alt="Memory upload"
-              className="w-full max-h-56 object-cover rounded"
-            />
+            <div className="relative w-full h-56">
+              <Image
+                src={signedUrl}
+                alt="Memory upload"
+                fill
+                unoptimized
+                sizes="(max-width: 768px) 100vw, 50vw"
+                className="object-cover rounded"
+              />
+            </div>
             {/* Scrapbook photo mounting corner effect */}
             <div className="absolute top-2 left-2 w-3 h-3 bg-[#e8dfd0] -rotate-45 shadow-sm" />
             <div className="absolute top-2 right-2 w-3 h-3 bg-[#e8dfd0] rotate-45 shadow-sm" />
@@ -234,7 +239,7 @@ export default function PageComponent({
 
         <div className="flex-1">
           <p className="font-body text-[#2d2621] text-base leading-relaxed whitespace-pre-wrap italic">
-            {entry.content}
+            {getDisplayContent(entry.content)}
           </p>
         </div>
       </div>

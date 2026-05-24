@@ -95,18 +95,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (isDemoMode) {
-      setLoading(true);
       const savedUser = localStorage.getItem('mock_user');
       if (savedUser) {
-        const parsedUser = JSON.parse(savedUser);
-        setUser(parsedUser);
+        const parsedUser = JSON.parse(savedUser) as User;
         const mockNotebookId = localStorage.getItem(`mock_notebook_id_${parsedUser.id}`);
-        setNotebookId(mockNotebookId);
+        window.setTimeout(() => {
+          setUser(parsedUser);
+          setNotebookId(mockNotebookId);
+        }, 0);
       } else {
-        setUser(null);
-        setNotebookId(null);
+        window.setTimeout(() => {
+          setUser(null);
+          setNotebookId(null);
+        }, 0);
       }
-      setLoading(false);
+      window.setTimeout(() => setLoading(false), 0);
       return;
     }
 

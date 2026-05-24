@@ -1,32 +1,22 @@
 'use client';
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import { supabase, isDemoMode } from '@/lib/supabase';
 import NotebookBook from '@/components/NotebookBook';
 import { BookOpen, Sparkles, Heart, Key, Share2, Clipboard, Check } from 'lucide-react';
-import { decryptContent } from '@/lib/crypto';
-
-interface NotebookEntry {
-  id: string;
-  author_id: string;
-  author_email: string;
-  content: string;
-  image_url: string | null;
-  page_number: number;
-  created_at: string;
-}
+import { decryptContent, DECRYPTION_FAILED_MARKER, ENCRYPTION_PREFIX } from '@/lib/crypto';
+import { MockNotebook, MockNotebookMember, NotebookEntry } from '@/lib/types';
 
 export default function HomePage() {
-  const { user, notebookId, refreshNotebookId, signOut, setMockNotebookId } = useAuth();
+  const { user, notebookId, loading, refreshNotebookId, signOut, setMockNotebookId } = useAuth();
   const [entries, setEntries] = useState<NotebookEntry[]>([]);
   const [fetching, setFetching] = useState(true);
   const [setupLoading, setSetupLoading] = useState(false);
   const [setupError, setSetupError] = useState('');
 
   // E2EE States
-  const [notebookKey, setNotebookKey] = useState<string | null>(null);
   const [createPassword, setCreatePassword] = useState('');
   const [joinPassword, setJoinPassword] = useState('');
   const [unlockPassword, setUnlockPassword] = useState('');
@@ -41,54 +31,50 @@ export default function HomePage() {
   const [inviteCode, setInviteCode] = useState<string | null>(null);
   const [isAlone, setIsAlone] = useState(false);
   const [copied, setCopied] = useState(false);
+  const fetchSeqRef = useRef(0);
 
   const router = useRouter();
 
   useEffect(() => {
-    if (!user || notebookId !== null || !fetching) return;
+    if (!user || notebookId !== null || !fetching || loading) return;
 
     const timer = window.setTimeout(() => setFetching(false), 400);
     return () => window.clearTimeout(timer);
-  }, [user, notebookId, fetching]);
+  }, [user, notebookId, fetching, loading]);
 
   // Redirect if user not logged in
   useEffect(() => {
-    if (!user) {
+    if (!loading && !user) {
       router.push('/login');
     }
-  }, [user, router]);
+  }, [loading, user, router]);
 
-  // Load notebook key from localStorage when notebookId changes
-  useEffect(() => {
-    if (notebookId) {
-      const key = localStorage.getItem(`notebook_key_${notebookId}`);
-      setNotebookKey(key);
-    } else {
-      setNotebookKey(null);
-    }
-  }, [notebookId]);
+  const notebookKey = notebookId ? localStorage.getItem(`notebook_key_${notebookId}`) : null;
 
   // Fetch notebook entries
   const fetchEntries = useCallback(async () => {
     if (!user || !notebookId) return;
+    const fetchSeq = ++fetchSeqRef.current;
 
     const key = localStorage.getItem(`notebook_key_${notebookId}`) || '';
 
     if (isDemoMode) {
       const mockEntriesStr = localStorage.getItem('mock_notebook_entries') || '[]';
-      const mockEntries = JSON.parse(mockEntriesStr);
+      const mockEntries: NotebookEntry[] = JSON.parse(mockEntriesStr);
       // Filter entries belonging to this specific notebook
-      const filtered = mockEntries.filter((e: any) => e.notebook_id === notebookId);
+      const filtered = mockEntries.filter((e) => e.notebook_id === notebookId);
       
       const decrypted = await Promise.all(
-        filtered.map(async (e: any) => {
+        filtered.map(async (e) => {
           const dec = await decryptContent(e.content, key);
           return { ...e, content: dec };
         })
       );
 
-      setEntries(decrypted);
-      setFetching(false);
+      if (fetchSeq === fetchSeqRef.current) {
+        setEntries(decrypted);
+        setFetching(false);
+      }
       return;
     }
 
@@ -103,17 +89,21 @@ export default function HomePage() {
         console.error('Error fetching notebook entries:', error);
       } else {
         const decrypted = await Promise.all(
-          (data || []).map(async (e: any) => {
+          (data || []).map(async (e: NotebookEntry) => {
             const dec = await decryptContent(e.content, key);
             return { ...e, content: dec };
           })
         );
-        setEntries(decrypted);
+        if (fetchSeq === fetchSeqRef.current) {
+          setEntries(decrypted);
+        }
       }
     } catch (err) {
       console.error('Failed to fetch entries:', err);
     } finally {
-      setFetching(false);
+      if (fetchSeq === fetchSeqRef.current) {
+        setFetching(false);
+      }
     }
   }, [user, notebookId]);
 
@@ -124,14 +114,14 @@ export default function HomePage() {
     if (isDemoMode) {
       // Load invite code
       const mockNotebooksStr = localStorage.getItem('mock_notebooks') || '[]';
-      const mockNotebooks = JSON.parse(mockNotebooksStr);
-      const activeNotebook = mockNotebooks.find((n: any) => n.id === notebookId);
+      const mockNotebooks: MockNotebook[] = JSON.parse(mockNotebooksStr);
+      const activeNotebook = mockNotebooks.find((n) => n.id === notebookId);
       setInviteCode(activeNotebook?.invite_code || null);
 
       // Count members
       const mockMembersStr = localStorage.getItem('mock_notebook_members') || '[]';
-      const mockMembers = JSON.parse(mockMembersStr);
-      const membersCount = mockMembers.filter((m: any) => m.notebook_id === notebookId).length;
+      const mockMembers: MockNotebookMember[] = JSON.parse(mockMembersStr);
+      const membersCount = mockMembers.filter((m) => m.notebook_id === notebookId).length;
       setIsAlone(membersCount < 2);
       return;
     }
@@ -165,8 +155,10 @@ export default function HomePage() {
   // Fetch entries and subscribe on mount / notebookId change
   useEffect(() => {
     if (user && notebookId) {
-      fetchEntries();
-      checkPairingStatus();
+      const kickoff = window.setTimeout(() => {
+        fetchEntries();
+        checkPairingStatus();
+      }, 0);
 
       if (isDemoMode) {
         // LocalStorage change listener for syncing sekmeler/tabs
@@ -178,7 +170,10 @@ export default function HomePage() {
           }
         };
         window.addEventListener('storage', handleStorageChange);
-        return () => window.removeEventListener('storage', handleStorageChange);
+        return () => {
+          window.clearTimeout(kickoff);
+          window.removeEventListener('storage', handleStorageChange);
+        };
       }
 
       // Realtime subscription for Supabase
@@ -209,6 +204,7 @@ export default function HomePage() {
         .subscribe();
 
       return () => {
+        window.clearTimeout(kickoff);
         supabase.removeChannel(channel);
       };
     }
@@ -235,7 +231,7 @@ export default function HomePage() {
 
         // 1. Save notebook details
         const mockNotebooksStr = localStorage.getItem('mock_notebooks') || '[]';
-        const mockNotebooks = JSON.parse(mockNotebooksStr);
+        const mockNotebooks: MockNotebook[] = JSON.parse(mockNotebooksStr);
         mockNotebooks.push({
           id: generatedId,
           name: newNotebookName.trim(),
@@ -255,7 +251,6 @@ export default function HomePage() {
 
         // Save key locally
         localStorage.setItem(`notebook_key_${generatedId}`, createPassword.trim());
-        setNotebookKey(createPassword.trim());
 
         // 3. Update auth state
         setMockNotebookId(generatedId);
@@ -283,14 +278,14 @@ export default function HomePage() {
 
         // Save key locally
         localStorage.setItem(`notebook_key_${notebook.id}`, createPassword.trim());
-        setNotebookKey(createPassword.trim());
 
         // 3. Refresh Auth State
         await refreshNotebookId();
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Failed to create notebook:', err);
-      setSetupError(err.message || 'Could not create notebook. Please try again.');
+      const message = err instanceof Error ? err.message : 'Could not create notebook. Please try again.';
+      setSetupError(message);
     } finally {
       setSetupLoading(false);
     }
@@ -313,8 +308,8 @@ export default function HomePage() {
 
       if (isDemoMode) {
         const mockNotebooksStr = localStorage.getItem('mock_notebooks') || '[]';
-        const mockNotebooks = JSON.parse(mockNotebooksStr);
-        const targetNotebook = mockNotebooks.find((n: any) => n.invite_code.toLowerCase() === code.toLowerCase());
+        const mockNotebooks: MockNotebook[] = JSON.parse(mockNotebooksStr);
+        const targetNotebook = mockNotebooks.find((n) => n.invite_code.toLowerCase() === code.toLowerCase());
 
         if (!targetNotebook) {
           setSetupError('Invalid invite code. Try using user1 or user2 invite codes if already generated.');
@@ -323,8 +318,8 @@ export default function HomePage() {
         }
 
         const mockMembersStr = localStorage.getItem('mock_notebook_members') || '[]';
-        const mockMembers = JSON.parse(mockMembersStr);
-        const existingMembers = mockMembers.filter((m: any) => m.notebook_id === targetNotebook.id);
+        const mockMembers: MockNotebookMember[] = JSON.parse(mockMembersStr);
+        const existingMembers = mockMembers.filter((m) => m.notebook_id === targetNotebook.id);
 
         if (existingMembers.length >= 2) {
           setSetupError('This notebook is already full (maximum 2 partners).');
@@ -342,7 +337,6 @@ export default function HomePage() {
 
         // Save key locally
         localStorage.setItem(`notebook_key_${targetNotebook.id}`, joinPassword.trim());
-        setNotebookKey(joinPassword.trim());
 
         // Save active notebook
         setMockNotebookId(targetNotebook.id);
@@ -384,15 +378,15 @@ export default function HomePage() {
         } else {
           // Save key locally
           localStorage.setItem(`notebook_key_${notebook.id}`, joinPassword.trim());
-          setNotebookKey(joinPassword.trim());
 
           // 3. Refresh Auth state
           await refreshNotebookId();
         }
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Failed to join notebook:', err);
-      setSetupError(err.message || 'Could not join notebook. Please try again.');
+      const message = err instanceof Error ? err.message : 'Could not join notebook. Please try again.';
+      setSetupError(message);
     } finally {
       setSetupLoading(false);
     }
@@ -407,13 +401,33 @@ export default function HomePage() {
     setUnlockError('');
 
     try {
-      // Find the first encrypted entry to verify password
-      const encryptedEntry = entries.find((entry) => entry.content.startsWith('ENC:'));
-      
-      if (encryptedEntry) {
-        const decrypted = await decryptContent(encryptedEntry.content, unlockPassword.trim());
-        if (decrypted.includes('[Encrypted - Decryption Failed')) {
-          setUnlockError('Geçersiz şifre. Lütfen partnerinizin belirlediği doğru şifreyi girdiğinizden emin olun.');
+      // Verify password against a raw encrypted entry from storage/db
+      let sampleEncryptedContent: string | null = null;
+
+      if (isDemoMode) {
+        const mockEntriesStr = localStorage.getItem('mock_notebook_entries') || '[]';
+        const mockEntries: NotebookEntry[] = JSON.parse(mockEntriesStr);
+        const target = mockEntries.find(
+          (entry) => entry.notebook_id === notebookId && entry.content.startsWith(ENCRYPTION_PREFIX)
+        );
+        sampleEncryptedContent = target?.content || null;
+      } else if (notebookId) {
+        const { data, error } = await supabase
+          .from('notebook_entries')
+          .select('content')
+          .eq('notebook_id', notebookId)
+          .order('created_at', { ascending: false })
+          .limit(20);
+
+        if (error) throw error;
+        const target = (data || []).find((entry) => entry.content?.startsWith(ENCRYPTION_PREFIX));
+        sampleEncryptedContent = target?.content || null;
+      }
+
+      if (sampleEncryptedContent) {
+        const decrypted = await decryptContent(sampleEncryptedContent, unlockPassword.trim());
+        if (decrypted === DECRYPTION_FAILED_MARKER) {
+          setUnlockError('Invalid password. Please make sure you entered the shared password correctly.');
           setUnlockLoading(false);
           return;
         }
@@ -421,8 +435,6 @@ export default function HomePage() {
 
       // Save key locally
       localStorage.setItem(`notebook_key_${notebookId}`, unlockPassword.trim());
-      setNotebookKey(unlockPassword.trim());
-
       // Trigger fetch again to decrypt all entries
       await fetchEntries();
     } catch (err) {
@@ -558,7 +570,7 @@ export default function HomePage() {
                       required
                     />
                     <p className="text-[9px] text-[#8b5a2b]/60 italic font-serif leading-none">
-                      * Bu şifre uçtan uca şifreleme için kullanılır ve sunucuya gönderilmez. Kaybetmeyin!
+                      * This password is used for end-to-end encryption and is never sent to the server.
                     </p>
                   </div>
                   <button
@@ -706,7 +718,7 @@ export default function HomePage() {
               <div className="h-[1px] w-24 bg-gradient-to-r from-transparent via-[#8b5a2b]/30 to-transparent mx-auto" />
 
               <p className="text-[10px] text-center text-[#8b5a2b]/60 font-serif italic">
-                * Bu şifre tarayıcınızda yerel olarak saklanır ve veritabanına asla gönderilmez.
+                * This password is stored locally in your browser and is never sent to the database.
               </p>
             </div>
           </div>
