@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef } from 'react';
-import Image from 'next/image';
+import NextImage from 'next/image';
 import { supabase, isDemoMode } from '@/lib/supabase';
 import { uploadImage } from '@/lib/storage';
 import { Image as ImageIcon, X, Send } from 'lucide-react';
@@ -315,7 +315,7 @@ export default function NewPageForm({ onSuccess, pageNumber, notebookId }: NewPa
             {imagePreview ? (
               <div className="relative rounded-lg overflow-hidden border border-[#e8dfd0] shadow-sm bg-white/40 p-2">
                 <div className="relative w-full h-32">
-                  <Image
+                  <NextImage
                     src={imagePreview}
                     alt="Upload preview"
                     fill

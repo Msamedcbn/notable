@@ -137,7 +137,7 @@ export default function NotebookBook({ entries, onRefresh, notebookId }: Noteboo
       scale: 1,
       transition: {
         duration: 0.6,
-        ease: 'easeOut',
+        ease: [0.16, 1, 0.3, 1] as const,
       },
     },
     exit: (dir: 'next' | 'prev') => ({
@@ -147,7 +147,7 @@ export default function NotebookBook({ entries, onRefresh, notebookId }: Noteboo
       transformOrigin: 'right center',
       transition: {
         duration: 0.4,
-        ease: 'easeIn',
+        ease: [0.7, 0, 0.84, 0] as const,
       },
     }),
   };
@@ -275,12 +275,12 @@ export default function NotebookBook({ entries, onRefresh, notebookId }: Noteboo
                         animate: {
                           x: 0,
                           opacity: 1,
-                          transition: { duration: 0.35, ease: 'easeOut' },
+                          transition: { duration: 0.35, ease: [0.16, 1, 0.3, 1] as const },
                         },
                         exit: (dir: 'next' | 'prev') => ({
                           x: dir === 'next' ? '-100%' : '100%',
                           opacity: 0,
-                          transition: { duration: 0.3, ease: 'easeIn' },
+                          transition: { duration: 0.3, ease: [0.7, 0, 0.84, 0] as const },
                         }),
                       }}
                       initial="initial"
