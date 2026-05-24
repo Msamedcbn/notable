@@ -7,6 +7,7 @@ import { uploadImage } from '@/lib/storage';
 import { Image as ImageIcon, X, Send } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { encryptContent } from '@/lib/crypto';
+import { getPrimaryNotebookKey } from '@/lib/keyring';
 
 interface NewPageFormProps {
   onSuccess: () => void;
@@ -195,7 +196,7 @@ export default function NewPageForm({ onSuccess, pageNumber, notebookId }: NewPa
       }
 
       // Read key from localStorage
-      const key = localStorage.getItem(`notebook_key_${notebookId}`) || '';
+      const key = getPrimaryNotebookKey(notebookId);
       if (!key) {
         throw new Error('Encryption key is missing. Please unlock the notebook again.');
       }

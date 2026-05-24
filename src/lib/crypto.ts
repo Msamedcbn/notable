@@ -123,3 +123,21 @@ export async function decryptContent(encryptedText: string, secret: string): Pro
     return DECRYPTION_FAILED_MARKER;
   }
 }
+
+export async function decryptContentWithSecrets(encryptedText: string, secrets: string[]): Promise<string> {
+  if (!encryptedText) return '';
+  if (!encryptedText.startsWith(ENCRYPTION_PREFIX)) {
+    return encryptedText;
+  }
+
+  for (const secret of secrets) {
+    const normalized = secret.trim();
+    if (!normalized) continue;
+    const result = await decryptContent(encryptedText, normalized);
+    if (result !== DECRYPTION_FAILED_MARKER && result !== LOCKED_CONTENT_MARKER) {
+      return result;
+    }
+  }
+
+  return DECRYPTION_FAILED_MARKER;
+}

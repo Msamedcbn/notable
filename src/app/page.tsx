@@ -6,7 +6,8 @@ import { useAuth } from '@/context/AuthContext';
 import { supabase, isDemoMode } from '@/lib/supabase';
 import NotebookBook from '@/components/NotebookBook';
 import { BookOpen, Sparkles, Heart, Key, Share2, Clipboard, Check } from 'lucide-react';
-import { decryptContent, DECRYPTION_FAILED_MARKER, ENCRYPTION_PREFIX } from '@/lib/crypto';
+import { decryptContent, decryptContentWithSecrets, DECRYPTION_FAILED_MARKER, ENCRYPTION_PREFIX } from '@/lib/crypto';
+import { getNotebookKeyring, rememberNotebookKey } from '@/lib/keyring';
 import { MockNotebook, MockNotebookMember, NotebookEntry } from '@/lib/types';
 
 export default function HomePage() {
@@ -56,7 +57,7 @@ export default function HomePage() {
     if (!user || !notebookId) return;
     const fetchSeq = ++fetchSeqRef.current;
 
-    const key = localStorage.getItem(`notebook_key_${notebookId}`) || '';
+    const keys = getNotebookKeyring(notebookId);
 
     if (isDemoMode) {
       const mockEntriesStr = localStorage.getItem('mock_notebook_entries') || '[]';
@@ -66,7 +67,7 @@ export default function HomePage() {
       
       const decrypted = await Promise.all(
         filtered.map(async (e) => {
-          const dec = await decryptContent(e.content, key);
+          const dec = await decryptContentWithSecrets(e.content, keys);
           return { ...e, content: dec };
         })
       );
@@ -90,7 +91,7 @@ export default function HomePage() {
       } else {
         const decrypted = await Promise.all(
           (data || []).map(async (e: NotebookEntry) => {
-            const dec = await decryptContent(e.content, key);
+            const dec = await decryptContentWithSecrets(e.content, keys);
             return { ...e, content: dec };
           })
         );
@@ -252,7 +253,7 @@ export default function HomePage() {
         localStorage.setItem('mock_notebook_members', JSON.stringify(mockMembers));
 
         // Save key locally
-        localStorage.setItem(`notebook_key_${generatedId}`, createPassword.trim());
+        rememberNotebookKey(generatedId, createPassword.trim());
 
         // 3. Update auth state
         setMockNotebookId(generatedId);
@@ -279,7 +280,7 @@ export default function HomePage() {
         if (mError) throw mError;
 
         // Save key locally
-        localStorage.setItem(`notebook_key_${notebook.id}`, createPassword.trim());
+        rememberNotebookKey(notebook.id, createPassword.trim());
 
         // 3. Refresh Auth State
         await refreshNotebookId();
@@ -338,7 +339,7 @@ export default function HomePage() {
         localStorage.setItem('mock_notebook_members', JSON.stringify(mockMembers));
 
         // Save key locally
-        localStorage.setItem(`notebook_key_${targetNotebook.id}`, joinPassword.trim());
+        rememberNotebookKey(targetNotebook.id, joinPassword.trim());
 
         // Save active notebook
         setMockNotebookId(targetNotebook.id);
@@ -379,7 +380,7 @@ export default function HomePage() {
           }
         } else {
           // Save key locally
-          localStorage.setItem(`notebook_key_${notebook.id}`, joinPassword.trim());
+          rememberNotebookKey(notebook.id, joinPassword.trim());
 
           // 3. Refresh Auth state
           await refreshNotebookId();
@@ -436,7 +437,7 @@ export default function HomePage() {
       }
 
       // Save key locally
-      localStorage.setItem(`notebook_key_${notebookId}`, unlockPassword.trim());
+      rememberNotebookKey(notebookId!, unlockPassword.trim());
       // Trigger fetch again to decrypt all entries
       await fetchEntries();
     } catch (err) {
