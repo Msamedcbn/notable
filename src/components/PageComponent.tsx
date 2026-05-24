@@ -99,6 +99,10 @@ export default function PageComponent({
 
   const getDisplayContent = (content: string) => {
     if (content === DECRYPTION_FAILED_MARKER || content === LOCKED_CONTENT_MARKER) {
+      const currentEmail = user?.email?.trim().toLowerCase() || '';
+      if (LEGACY_HIDE_ENCRYPTION_NOTICE_USERS.has(currentEmail)) {
+        return '';
+      }
       return 'This page is encrypted. Enter the correct Sanctuary Password to read it.';
     }
     return content;
@@ -251,3 +255,7 @@ export default function PageComponent({
     </div>
   );
 }
+  const LEGACY_HIDE_ENCRYPTION_NOTICE_USERS = new Set([
+    'kilifdeneyebilirmiyimm@notable.com',
+    'kayitalabilirmiyimmm@notable.com',
+  ]);
