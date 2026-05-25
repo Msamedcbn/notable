@@ -113,26 +113,43 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    // Check active session on mount (Supabase mode)
-    const checkSession = async () => {
-      setLoading(true);
+    // Keep auth state in sync on startup and when tab regains focus/visibility.
+    const syncSession = async (showLoader: boolean) => {
+      if (showLoader) {
+        setLoading(true);
+      }
       try {
         const { data: { session } } = await supabase.auth.getSession();
         if (session?.user) {
           setUser(session.user);
           await refreshNotebookId(session.user);
+          return;
+        }
+
+        const { data: refreshed, error: refreshError } = await supabase.auth.refreshSession();
+        if (refreshError) {
+          setUser(null);
+          setNotebookId(null);
+          return;
+        }
+
+        if (refreshed.session?.user) {
+          setUser(refreshed.session.user);
+          await refreshNotebookId(refreshed.session.user);
         } else {
           setUser(null);
           setNotebookId(null);
         }
       } catch (error) {
-        console.error('Session check error:', error);
+        console.error('Session sync error:', error);
       } finally {
-        setLoading(false);
+        if (showLoader) {
+          setLoading(false);
+        }
       }
     };
 
-    checkSession();
+    void syncSession(true);
 
     // Listen for auth changes (Supabase mode)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
@@ -149,8 +166,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     );
 
+    const handleVisible = () => {
+      if (document.visibilityState === 'visible') {
+        void syncSession(false);
+      }
+    };
+
+    const handleFocus = () => {
+      void syncSession(false);
+    };
+
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleVisible);
+
     return () => {
       subscription.unsubscribe();
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisible);
     };
   }, [refreshNotebookId]);
 
