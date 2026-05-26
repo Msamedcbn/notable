@@ -127,6 +127,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           return;
         }
 
+        // Do not block first paint on hard refresh; try refresh session in background.
+        setUser(null);
+        setNotebookId(null);
+
         const refreshWithTimeout = Promise.race([
           supabase.auth.refreshSession(),
           new Promise<never>((_, reject) =>
@@ -134,20 +138,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           ),
         ]);
 
-        const { data: refreshed, error: refreshError } = await refreshWithTimeout;
-        if (refreshError) {
-          setUser(null);
-          setNotebookId(null);
-          return;
-        }
-
-        if (refreshed.session?.user) {
-          setUser(refreshed.session.user);
-          await refreshNotebookId(refreshed.session.user);
-        } else {
-          setUser(null);
-          setNotebookId(null);
-        }
+        void refreshWithTimeout
+          .then(async ({ data: refreshed, error: refreshError }) => {
+            if (refreshError || !refreshed.session?.user) return;
+            setUser(refreshed.session.user);
+            await refreshNotebookId(refreshed.session.user);
+          })
+          .catch((error) => {
+            console.error('Background session refresh error:', error);
+          });
       } catch (error) {
         console.error('Session sync error:', error);
       } finally {

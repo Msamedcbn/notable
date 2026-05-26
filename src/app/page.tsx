@@ -16,6 +16,8 @@ export default function HomePage() {
   const [entries, setEntries] = useState<NotebookEntry[]>([]);
   const [fetching, setFetching] = useState(true);
   const [setupLoading, setSetupLoading] = useState(false);
+  const [setupLocked, setSetupLocked] = useState(false);
+  const [setupMode, setSetupMode] = useState<'create' | 'join' | null>(null);
   const [setupError, setSetupError] = useState('');
   const [setupErrorNotebookId, setSetupErrorNotebookId] = useState<string | null>(null);
   const [leaveLoading, setLeaveLoading] = useState(false);
@@ -40,6 +42,7 @@ export default function HomePage() {
   const [copied, setCopied] = useState(false);
   const fetchSeqRef = useRef(0);
   const activeNotebookRef = useRef<string | null>(null);
+  const setupActionLockRef = useRef(false);
 
   const router = useRouter();
 
@@ -248,9 +251,12 @@ export default function HomePage() {
   // Handle notebook creation
   const handleCreateNotebook = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newNotebookName.trim() || !user || !createPassword.trim() || leaveLoading) return;
+    if (!newNotebookName.trim() || !user || !createPassword.trim() || leaveLoading || setupActionLockRef.current) return;
 
+    setupActionLockRef.current = true;
+    setSetupLocked(true);
     setSetupLoading(true);
+    setSetupMode('create');
     setSetupErrorForCurrent('');
 
     try {
@@ -322,15 +328,21 @@ export default function HomePage() {
       setSetupErrorForCurrent(mapErrorToUserMessage(err, 'create'));
     } finally {
       setSetupLoading(false);
+      setSetupLocked(false);
+      setSetupMode(null);
+      setupActionLockRef.current = false;
     }
   };
 
   // Handle notebook joining
   const handleJoinNotebook = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inviteCodeInput.trim() || !user || !joinPassword.trim() || leaveLoading) return;
+    if (!inviteCodeInput.trim() || !user || !joinPassword.trim() || leaveLoading || setupActionLockRef.current) return;
 
+    setupActionLockRef.current = true;
+    setSetupLocked(true);
     setSetupLoading(true);
+    setSetupMode('join');
     setSetupErrorForCurrent('');
 
     try {
@@ -435,6 +447,9 @@ export default function HomePage() {
       setSetupErrorForCurrent(mapErrorToUserMessage(err, 'join'));
     } finally {
       setSetupLoading(false);
+      setSetupLocked(false);
+      setSetupMode(null);
+      setupActionLockRef.current = false;
     }
   };
 
@@ -667,10 +682,10 @@ export default function HomePage() {
                   </div>
                   <button
                     type="submit"
-                    disabled={setupLoading || leaveLoading}
+                    disabled={setupLoading || leaveLoading || setupLocked}
                     className="w-full py-2 bg-[#5c3e21] hover:bg-[#483019] text-[#faf5eb] font-serif font-bold text-xs rounded transition shadow flex items-center justify-center gap-1.5 cursor-pointer"
                   >
-                    {setupLoading ? 'Creating...' : <><Sparkles className="h-3.5 w-3.5" /><span>Create Private Notebook</span></>}
+                    {setupLoading && setupMode === 'create' ? 'Creating...' : <><Sparkles className="h-3.5 w-3.5" /><span>Create Private Notebook</span></>}
                   </button>
                 </form>
 
@@ -709,10 +724,10 @@ export default function HomePage() {
                   </div>
                   <button
                     type="submit"
-                    disabled={setupLoading || leaveLoading}
+                    disabled={setupLoading || leaveLoading || setupLocked}
                     className="w-full py-2 bg-[#8b5a2b] hover:bg-[#724a23] text-[#faf5eb] font-serif font-bold text-xs rounded transition shadow flex items-center justify-center gap-1.5 cursor-pointer"
                   >
-                    {setupLoading ? 'Joining...' : <><Heart className="h-3.5 w-3.5" /><span>Unlock & Enter Notebook</span></>}
+                    {setupLoading && setupMode === 'join' ? 'Joining...' : <><Heart className="h-3.5 w-3.5" /><span>Unlock & Enter Notebook</span></>}
                   </button>
                 </form>
               </div>
