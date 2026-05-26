@@ -394,7 +394,20 @@ export default function HomePage() {
           return;
         }
 
-        // 2. Join notebook (membership policies prevent joining if already full)
+        // 2. Check capacity explicitly so users get a clear message before policy-level rejection.
+        const { count, error: countError } = await supabase
+          .from('notebook_members')
+          .select('*', { count: 'exact', head: true })
+          .eq('notebook_id', notebook.id);
+
+        if (countError) throw countError;
+        if ((count ?? 0) >= 2) {
+          setSetupErrorForCurrent('Bu kitap dolu (en fazla 2 kisi).');
+          setSetupLoading(false);
+          return;
+        }
+
+        // 3. Join notebook
         const { error: mError } = await supabase
           .from('notebook_members')
           .insert({
@@ -413,7 +426,7 @@ export default function HomePage() {
           // Save key locally
           rememberNotebookKey(notebook.id, joinPassword.trim());
 
-          // 3. Refresh Auth state
+          // 4. Refresh Auth state
           await refreshNotebookId();
         }
       }

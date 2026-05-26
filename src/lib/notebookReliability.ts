@@ -15,7 +15,12 @@ export function mapErrorToUserMessage(err: unknown, context: UserFacingErrorCont
     return 'Kitaba katilirken bir hata olustu. Lutfen tekrar deneyin.';
   }
 
-  if (context === 'leave') return 'Kitaptan ayrilirken bir hata olustu. Lutfen tekrar deneyin.';
+  if (context === 'leave') {
+    if (code === '42501' || message.includes('row-level security')) {
+      return 'Yetki problemi: Ayrilma izni bulunamadi. Lutfen sistem politikasini guncelleyip tekrar deneyin.';
+    }
+    return 'Kitaptan ayrilirken bir hata olustu. Lutfen tekrar deneyin.';
+  }
   if (context === 'unlock') return 'Kilit acilirken bir hata olustu. Lutfen tekrar deneyin.';
   if (context === 'create') return 'Kitap olusturulurken bir hata olustu. Lutfen tekrar deneyin.';
   return 'Bir hata olustu. Lutfen tekrar deneyin.';
@@ -55,4 +60,3 @@ export function leaveCurrentNotebookInDemoMode(notebookId: string, userId: strin
 
   persistDemoData({ notebooks: nextNotebooks, members: nextMembers, entries: nextEntries });
 }
-

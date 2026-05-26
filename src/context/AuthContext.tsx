@@ -23,6 +23,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState<boolean>(true);
   const userRef = useRef<User | null>(null);
   const router = useRouter();
+  const SESSION_REFRESH_TIMEOUT_MS = 3500;
 
   // Fetch active notebook membership
   const refreshNotebookId = useCallback(async (currentUser?: User | null): Promise<string | null> => {
@@ -126,7 +127,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           return;
         }
 
-        const { data: refreshed, error: refreshError } = await supabase.auth.refreshSession();
+        const refreshWithTimeout = Promise.race([
+          supabase.auth.refreshSession(),
+          new Promise<never>((_, reject) =>
+            window.setTimeout(() => reject(new Error('refresh_session_timeout')), SESSION_REFRESH_TIMEOUT_MS)
+          ),
+        ]);
+
+        const { data: refreshed, error: refreshError } = await refreshWithTimeout;
         if (refreshError) {
           setUser(null);
           setNotebookId(null);
@@ -154,15 +162,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Listen for auth changes (Supabase mode)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
-        setLoading(true);
-        if (session?.user) {
-          setUser(session.user);
-          await refreshNotebookId(session.user);
-        } else {
-          setUser(null);
-          setNotebookId(null);
+        const shouldBlockUI = event === 'INITIAL_SESSION' || event === 'SIGNED_IN' || event === 'SIGNED_OUT';
+        if (shouldBlockUI) {
+          setLoading(true);
         }
-        setLoading(false);
+        try {
+          if (session?.user) {
+            setUser(session.user);
+            await refreshNotebookId(session.user);
+          } else {
+            setUser(null);
+            setNotebookId(null);
+          }
+        } catch (err) {
+          console.error('Auth state sync error:', err);
+        } finally {
+          if (shouldBlockUI) {
+            setLoading(false);
+          }
+        }
       }
     );
 
