@@ -7,4 +7,3 @@ CREATE POLICY "Allow user to leave notebook (delete own membership)" ON public.n
     auth.uid() IS NOT NULL
     AND user_id = auth.uid()
   );
-

@@ -398,6 +398,16 @@ export default function HomePage() {
 
         const mockMembersStr = localStorage.getItem('mock_notebook_members') || '[]';
         const mockMembers: MockNotebookMember[] = JSON.parse(mockMembersStr);
+        const isAlreadyMember = mockMembers.some(
+          (m) => m.notebook_id === targetNotebook.id && m.user_id === user.id
+        );
+
+        if (isAlreadyMember) {
+          rememberNotebookKey(targetNotebook.id, joinPassword.trim());
+          setMockNotebookId(targetNotebook.id);
+          return;
+        }
+
         const existingMembers = mockMembers.filter((m) => m.notebook_id === targetNotebook.id);
 
         if (existingMembers.length >= 2) {
@@ -441,7 +451,27 @@ export default function HomePage() {
           return;
         }
 
-        // 2. Check capacity explicitly so users get a clear message before policy-level rejection.
+        // 2. Check if this user is already a member first.
+        const { data: existingMembership, error: existingMembershipError } = await withTimeout(
+          supabase
+            .from('notebook_members')
+            .select('notebook_id')
+            .eq('notebook_id', notebook.id)
+            .eq('user_id', user.id)
+            .maybeSingle(),
+          DEFAULT_TIMEOUT_MS,
+          'CHECK_ALREADY_MEMBER_TIMEOUT'
+        );
+
+        if (existingMembershipError) throw existingMembershipError;
+
+        if (existingMembership) {
+          rememberNotebookKey(notebook.id, joinPassword.trim());
+          await refreshNotebookId();
+          return;
+        }
+
+        // 3. Check capacity explicitly so users get a clear message before policy-level rejection.
         const { count, error: countError } = await withTimeout(
           supabase
             .from('notebook_members')
@@ -457,7 +487,7 @@ export default function HomePage() {
           return;
         }
 
-        // 3. Join notebook
+        // 4. Join notebook
         const { error: mError } = await withTimeout(
           supabase
             .from('notebook_members')
@@ -471,6 +501,12 @@ export default function HomePage() {
         );
 
         if (mError) {
+          if (mError.code === '23505') {
+            // Race-safe behavior: membership already exists, treat as success.
+            rememberNotebookKey(notebook.id, joinPassword.trim());
+            await refreshNotebookId();
+            return;
+          }
           if (mError.code === '42501' || mError.message.toLowerCase().includes('row-level security')) {
             setSetupErrorForCurrent('Yetki problemi: Bu kitaba katilma izniniz yok.');
           } else {
