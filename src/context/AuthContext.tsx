@@ -4,6 +4,7 @@ import React, { createContext, useContext, useEffect, useState, useCallback, use
 import { User } from '@supabase/supabase-js';
 import { supabase, isDemoMode } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
+import { DEFAULT_TIMEOUT_MS, withTimeout } from '@/lib/async';
 
 interface AuthContextType {
   user: User | null;
@@ -22,8 +23,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [notebookId, setNotebookId] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const userRef = useRef<User | null>(null);
+  const loadingWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const router = useRouter();
-  const SESSION_REFRESH_TIMEOUT_MS = 3500;
 
   // Fetch active notebook membership
   const refreshNotebookId = useCallback(async (currentUser?: User | null): Promise<string | null> => {
@@ -40,11 +41,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     try {
-      const { data, error } = await supabase
-        .from('notebook_members')
-        .select('notebook_id')
-        .eq('user_id', resolvedUser.id)
-        .maybeSingle();
+      const { data, error } = await withTimeout(
+        supabase
+          .from('notebook_members')
+          .select('notebook_id')
+          .eq('user_id', resolvedUser.id)
+          .maybeSingle(),
+        DEFAULT_TIMEOUT_MS,
+        'NOTEBOOK_MEMBERSHIP_TIMEOUT'
+      );
 
       if (error) {
         console.error('Error fetching notebook membership:', error);
@@ -65,6 +70,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     userRef.current = user;
   }, [user]);
+
+  useEffect(() => {
+    if (loadingWatchdogRef.current) {
+      clearTimeout(loadingWatchdogRef.current);
+      loadingWatchdogRef.current = null;
+    }
+
+    if (!loading) return;
+
+    loadingWatchdogRef.current = setTimeout(() => {
+      // Last-resort safety valve: never keep the full UI blocked forever.
+      setLoading(false);
+      loadingWatchdogRef.current = null;
+    }, 12_000);
+
+    return () => {
+      if (loadingWatchdogRef.current) {
+        clearTimeout(loadingWatchdogRef.current);
+        loadingWatchdogRef.current = null;
+      }
+    };
+  }, [loading]);
 
   const signInMockUser = (email: string, displayName: string) => {
     const mockUser: User = {
@@ -120,7 +147,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setLoading(true);
       }
       try {
-        const { data: { session } } = await supabase.auth.getSession();
+        const { data: { session } } = await withTimeout(
+          supabase.auth.getSession(),
+          DEFAULT_TIMEOUT_MS,
+          'GET_SESSION_TIMEOUT'
+        );
         if (session?.user) {
           setUser(session.user);
           await refreshNotebookId(session.user);
@@ -131,12 +162,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUser(null);
         setNotebookId(null);
 
-        const refreshWithTimeout = Promise.race([
+        const refreshWithTimeout = withTimeout(
           supabase.auth.refreshSession(),
-          new Promise<never>((_, reject) =>
-            window.setTimeout(() => reject(new Error('refresh_session_timeout')), SESSION_REFRESH_TIMEOUT_MS)
-          ),
-        ]);
+          DEFAULT_TIMEOUT_MS,
+          'REFRESH_SESSION_TIMEOUT'
+        );
 
         void refreshWithTimeout
           .then(async ({ data: refreshed, error: refreshError }) => {
@@ -205,15 +235,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signOut = async () => {
     setLoading(true);
-    if (isDemoMode) {
-      localStorage.removeItem('mock_user');
-    } else {
-      await supabase.auth.signOut();
+    try {
+      if (isDemoMode) {
+        localStorage.removeItem('mock_user');
+      } else {
+        await withTimeout(supabase.auth.signOut(), DEFAULT_TIMEOUT_MS, 'SIGN_OUT_TIMEOUT');
+      }
+    } catch (error) {
+      console.error('Sign out error (local cleanup will continue):', error);
+    } finally {
+      setUser(null);
+      setNotebookId(null);
+      setLoading(false);
+      router.push('/login');
     }
-    setUser(null);
-    setNotebookId(null);
-    setLoading(false);
-    router.push('/login');
   };
 
   return (

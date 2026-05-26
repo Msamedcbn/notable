@@ -10,6 +10,7 @@ import { decryptContent, decryptContentWithSecrets, DECRYPTION_FAILED_MARKER, EN
 import { getNotebookKeyring, rememberNotebookKey } from '@/lib/keyring';
 import { MockNotebook, MockNotebookMember, NotebookEntry } from '@/lib/types';
 import { leaveCurrentNotebookInDemoMode, mapErrorToUserMessage } from '@/lib/notebookReliability';
+import { DEFAULT_TIMEOUT_MS, withTimeout } from '@/lib/async';
 
 export default function HomePage() {
   const { user, notebookId, loading, refreshNotebookId, signOut, setMockNotebookId } = useAuth();
@@ -65,12 +66,42 @@ export default function HomePage() {
     setUnlockError(message);
   };
 
+  const runSetupAction = async (mode: 'create' | 'join', action: () => Promise<void>) => {
+    if (setupActionLockRef.current) {
+      if (process.env.NODE_ENV !== 'production') {
+        console.debug(`Setup action blocked: ${mode}`);
+      }
+      return;
+    }
+
+    setupActionLockRef.current = true;
+    setSetupLocked(true);
+    setSetupLoading(true);
+    setSetupMode(mode);
+    setSetupErrorForCurrent('');
+
+    try {
+      await action();
+    } finally {
+      setSetupLoading(false);
+      setSetupLocked(false);
+      setSetupMode(null);
+      setupActionLockRef.current = false;
+    }
+  };
+
   useEffect(() => {
     if (!user || notebookId !== null || !fetching || loading) return;
 
     const timer = window.setTimeout(() => setFetching(false), 400);
     return () => window.clearTimeout(timer);
   }, [user, notebookId, fetching, loading]);
+
+  useEffect(() => {
+    if (!fetching) return;
+    const fallback = window.setTimeout(() => setFetching(false), 12000);
+    return () => window.clearTimeout(fallback);
+  }, [fetching]);
 
   // Redirect if user not logged in
   useEffect(() => {
@@ -110,11 +141,15 @@ export default function HomePage() {
     }
 
     try {
-      const { data, error } = await supabase
-        .from('notebook_entries')
-        .select('*')
-        .eq('notebook_id', notebookIdAtCall)
-        .order('created_at', { ascending: true });
+      const { data, error } = await withTimeout(
+        supabase
+          .from('notebook_entries')
+          .select('*')
+          .eq('notebook_id', notebookIdAtCall)
+          .order('created_at', { ascending: true }),
+        DEFAULT_TIMEOUT_MS,
+        'FETCH_ENTRIES_TIMEOUT'
+      );
 
       if (error) {
         console.error('Error fetching notebook entries:', error);
@@ -160,21 +195,29 @@ export default function HomePage() {
 
     try {
       // Get notebook details
-      const { data: notebook, error: nError } = await supabase
-        .from('notebooks')
-        .select('invite_code')
-        .eq('id', notebookIdAtCall)
-        .single();
+      const { data: notebook, error: nError } = await withTimeout(
+        supabase
+          .from('notebooks')
+          .select('invite_code')
+          .eq('id', notebookIdAtCall)
+          .single(),
+        DEFAULT_TIMEOUT_MS,
+        'FETCH_NOTEBOOK_DETAILS_TIMEOUT'
+      );
 
       if (!nError && notebook) {
         setInviteCode(notebook.invite_code);
       }
 
       // Count members
-      const { count, error: cError } = await supabase
-        .from('notebook_members')
-        .select('*', { count: 'exact', head: true })
-        .eq('notebook_id', notebookIdAtCall);
+      const { count, error: cError } = await withTimeout(
+        supabase
+          .from('notebook_members')
+          .select('*', { count: 'exact', head: true })
+          .eq('notebook_id', notebookIdAtCall),
+        DEFAULT_TIMEOUT_MS,
+        'FETCH_MEMBER_COUNT_TIMEOUT'
+      );
 
       if (!cError && count !== null) {
         setIsAlone(count < 2);
@@ -251,15 +294,9 @@ export default function HomePage() {
   // Handle notebook creation
   const handleCreateNotebook = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newNotebookName.trim() || !user || !createPassword.trim() || leaveLoading || setupActionLockRef.current) return;
+    if (!newNotebookName.trim() || !user || !createPassword.trim() || leaveLoading) return;
 
-    setupActionLockRef.current = true;
-    setSetupLocked(true);
-    setSetupLoading(true);
-    setSetupMode('create');
-    setSetupErrorForCurrent('');
-
-    try {
+    await runSetupAction('create', async () => {
       const userEmail = user.email?.trim().toLowerCase();
       if (!userEmail) {
         throw new Error('Kullanici e-posta bilgisi okunamadi. Lutfen tekrar giris yapin.');
@@ -298,22 +335,30 @@ export default function HomePage() {
       } else {
         // Supabase Mode
         // 1. Create notebook
-        const { data: notebook, error: nError } = await supabase
-          .from('notebooks')
-          .insert({ name: newNotebookName.trim() })
-          .select()
-          .single();
+        const { data: notebook, error: nError } = await withTimeout(
+          supabase
+            .from('notebooks')
+            .insert({ name: newNotebookName.trim() })
+            .select()
+            .single(),
+          DEFAULT_TIMEOUT_MS,
+          'CREATE_NOTEBOOK_TIMEOUT'
+        );
 
         if (nError) throw nError;
 
         // 2. Create membership
-        const { error: mError } = await supabase
-          .from('notebook_members')
-          .insert({
-            notebook_id: notebook.id,
-            user_id: user.id,
-            user_email: userEmail
-          });
+        const { error: mError } = await withTimeout(
+          supabase
+            .from('notebook_members')
+            .insert({
+              notebook_id: notebook.id,
+              user_id: user.id,
+              user_email: userEmail
+            }),
+          DEFAULT_TIMEOUT_MS,
+          'CREATE_MEMBERSHIP_TIMEOUT'
+        );
 
         if (mError) throw mError;
 
@@ -323,29 +368,18 @@ export default function HomePage() {
         // 3. Refresh Auth State
         await refreshNotebookId();
       }
-    } catch (err: unknown) {
+    }).catch((err: unknown) => {
       console.error('Failed to create notebook:', err);
       setSetupErrorForCurrent(mapErrorToUserMessage(err, 'create'));
-    } finally {
-      setSetupLoading(false);
-      setSetupLocked(false);
-      setSetupMode(null);
-      setupActionLockRef.current = false;
-    }
+    });
   };
 
   // Handle notebook joining
   const handleJoinNotebook = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inviteCodeInput.trim() || !user || !joinPassword.trim() || leaveLoading || setupActionLockRef.current) return;
+    if (!inviteCodeInput.trim() || !user || !joinPassword.trim() || leaveLoading) return;
 
-    setupActionLockRef.current = true;
-    setSetupLocked(true);
-    setSetupLoading(true);
-    setSetupMode('join');
-    setSetupErrorForCurrent('');
-
-    try {
+    await runSetupAction('join', async () => {
       const code = inviteCodeInput.trim();
       const userEmail = user.email?.trim().toLowerCase();
       if (!userEmail) {
@@ -359,7 +393,6 @@ export default function HomePage() {
 
         if (!targetNotebook) {
           setSetupErrorForCurrent('Kod gecersiz. Lutfen davet kodunu kontrol edin.');
-          setSetupLoading(false);
           return;
         }
 
@@ -369,7 +402,6 @@ export default function HomePage() {
 
         if (existingMembers.length >= 2) {
           setSetupErrorForCurrent('Bu kitap dolu (en fazla 2 kisi).');
-          setSetupLoading(false);
           return;
         }
 
@@ -392,41 +424,51 @@ export default function HomePage() {
       } else {
         // Supabase Mode
         // 1. Fetch notebook by invite code
-        const { data: notebook, error: nError } = await supabase
-          .from('notebooks')
-          .select('*')
-          .eq('invite_code', code)
-          .maybeSingle();
+        const { data: notebook, error: nError } = await withTimeout(
+          supabase
+            .from('notebooks')
+            .select('*')
+            .eq('invite_code', code)
+            .maybeSingle(),
+          DEFAULT_TIMEOUT_MS,
+          'LOOKUP_NOTEBOOK_TIMEOUT'
+        );
 
         if (nError) throw nError;
         
         if (!notebook) {
           setSetupErrorForCurrent('Kod gecersiz. Lutfen davet kodunu kontrol edin.');
-          setSetupLoading(false);
           return;
         }
 
         // 2. Check capacity explicitly so users get a clear message before policy-level rejection.
-        const { count, error: countError } = await supabase
-          .from('notebook_members')
-          .select('*', { count: 'exact', head: true })
-          .eq('notebook_id', notebook.id);
+        const { count, error: countError } = await withTimeout(
+          supabase
+            .from('notebook_members')
+            .select('*', { count: 'exact', head: true })
+            .eq('notebook_id', notebook.id),
+          DEFAULT_TIMEOUT_MS,
+          'COUNT_MEMBERS_TIMEOUT'
+        );
 
         if (countError) throw countError;
         if ((count ?? 0) >= 2) {
           setSetupErrorForCurrent('Bu kitap dolu (en fazla 2 kisi).');
-          setSetupLoading(false);
           return;
         }
 
         // 3. Join notebook
-        const { error: mError } = await supabase
-          .from('notebook_members')
-          .insert({
-            notebook_id: notebook.id,
-            user_id: user.id,
-            user_email: userEmail
-          });
+        const { error: mError } = await withTimeout(
+          supabase
+            .from('notebook_members')
+            .insert({
+              notebook_id: notebook.id,
+              user_id: user.id,
+              user_email: userEmail
+            }),
+          DEFAULT_TIMEOUT_MS,
+          'JOIN_MEMBERSHIP_TIMEOUT'
+        );
 
         if (mError) {
           if (mError.code === '42501' || mError.message.toLowerCase().includes('row-level security')) {
@@ -442,15 +484,10 @@ export default function HomePage() {
           await refreshNotebookId();
         }
       }
-    } catch (err: unknown) {
+    }).catch((err: unknown) => {
       console.error('Failed to join notebook:', err);
       setSetupErrorForCurrent(mapErrorToUserMessage(err, 'join'));
-    } finally {
-      setSetupLoading(false);
-      setSetupLocked(false);
-      setSetupMode(null);
-      setupActionLockRef.current = false;
-    }
+    });
   };
 
   // Handle notebook unlocking
@@ -473,12 +510,16 @@ export default function HomePage() {
         );
         sampleEncryptedContent = target?.content || null;
       } else if (notebookId) {
-        const { data, error } = await supabase
-          .from('notebook_entries')
-          .select('content')
-          .eq('notebook_id', notebookId)
-          .order('created_at', { ascending: false })
-          .limit(20);
+        const { data, error } = await withTimeout(
+          supabase
+            .from('notebook_entries')
+            .select('content')
+            .eq('notebook_id', notebookId)
+            .order('created_at', { ascending: false })
+            .limit(20),
+          DEFAULT_TIMEOUT_MS,
+          'UNLOCK_SAMPLE_FETCH_TIMEOUT'
+        );
 
         if (error) throw error;
         const target = (data || []).find((entry) => entry.content?.startsWith(ENCRYPTION_PREFIX));
@@ -533,11 +574,15 @@ export default function HomePage() {
         localStorage.removeItem(`notebook_keyring_${currentNotebookId}`);
         setMockNotebookId(null);
       } else {
-        const { error } = await supabase
-          .from('notebook_members')
-          .delete()
-          .eq('notebook_id', currentNotebookId)
-          .eq('user_id', user.id);
+        const { error } = await withTimeout(
+          supabase
+            .from('notebook_members')
+            .delete()
+            .eq('notebook_id', currentNotebookId)
+            .eq('user_id', user.id),
+          DEFAULT_TIMEOUT_MS,
+          'LEAVE_MEMBERSHIP_TIMEOUT'
+        );
 
         if (error) throw error;
 

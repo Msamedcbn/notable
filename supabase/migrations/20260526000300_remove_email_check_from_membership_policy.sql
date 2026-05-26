@@ -1,7 +1,9 @@
 -- Some auth providers/sessions may not provide a stable `email` claim in JWT.
 -- Enforce membership insert by authenticated user id + notebook capacity only.
 
+-- Clean up any legacy/variant insert policies first.
 DROP POLICY IF EXISTS "Allow user to add themselves to notebook with space (< 2 members)" ON public.notebook_members;
+DROP POLICY IF EXISTS "Allow user to join notebook with space (< 2 members)" ON public.notebook_members;
 
 CREATE POLICY "Allow user to add themselves to notebook with space (< 2 members)" ON public.notebook_members
   FOR INSERT TO authenticated
@@ -10,4 +12,3 @@ CREATE POLICY "Allow user to add themselves to notebook with space (< 2 members)
     AND user_id = auth.uid()
     AND public.notebook_has_space(notebook_id)
   );
-

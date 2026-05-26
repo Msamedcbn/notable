@@ -6,12 +6,18 @@ export function mapErrorToUserMessage(err: unknown, context: UserFacingErrorCont
   const code = typeof err === 'object' && err !== null && 'code' in err ? String((err as { code: unknown }).code) : '';
   const message =
     typeof err === 'object' && err !== null && 'message' in err ? String((err as { message: unknown }).message).toLowerCase() : '';
+  const isTimeout = code.toUpperCase().includes('TIMEOUT') || message.includes('timeout') || message.includes('timed out');
+  const isNetwork = message.includes('network') || message.includes('fetch') || message.includes('failed to fetch');
+
+  if (isTimeout || isNetwork) {
+    return 'Baglanti gecikmesi. Lutfen tekrar deneyin.';
+  }
 
   if (context === 'join') {
+    if (message.includes('invalid invite') || message.includes('invalid code')) return 'Kod gecersiz. Lutfen davet kodunu kontrol edin.';
+    if (message.includes('full') || message.includes('space')) return 'Bu kitap dolu (en fazla 2 kisi).';
     if (code === '42501' || message.includes('row-level security')) return 'Yetki problemi: Bu kitaba katilma izniniz yok.';
     if (code === '23505' || message.includes('duplicate')) return 'Bu kitaba zaten baglisiniz.';
-    if (message.includes('full') || message.includes('space')) return 'Bu kitap dolu (en fazla 2 kisi).';
-    if (message.includes('invalid invite') || message.includes('invalid code')) return 'Kod gecersiz. Lutfen davet kodunu kontrol edin.';
     return 'Kitaba katilirken bir hata olustu. Lutfen tekrar deneyin.';
   }
 
