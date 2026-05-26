@@ -5,10 +5,11 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import { supabase, isDemoMode } from '@/lib/supabase';
 import NotebookBook from '@/components/NotebookBook';
-import { BookOpen, Sparkles, Heart, Key, Share2, Clipboard, Check } from 'lucide-react';
+import { BookOpen, Sparkles, Heart, Key, Share2, Clipboard, Check, LogOut } from 'lucide-react';
 import { decryptContent, decryptContentWithSecrets, DECRYPTION_FAILED_MARKER, ENCRYPTION_PREFIX } from '@/lib/crypto';
 import { getNotebookKeyring, rememberNotebookKey } from '@/lib/keyring';
 import { MockNotebook, MockNotebookMember, NotebookEntry } from '@/lib/types';
+import { leaveCurrentNotebookInDemoMode, mapErrorToUserMessage } from '@/lib/notebookReliability';
 
 export default function HomePage() {
   const { user, notebookId, loading, refreshNotebookId, signOut, setMockNotebookId } = useAuth();
@@ -16,12 +17,17 @@ export default function HomePage() {
   const [fetching, setFetching] = useState(true);
   const [setupLoading, setSetupLoading] = useState(false);
   const [setupError, setSetupError] = useState('');
+  const [setupErrorNotebookId, setSetupErrorNotebookId] = useState<string | null>(null);
+  const [leaveLoading, setLeaveLoading] = useState(false);
+  const [leaveError, setLeaveError] = useState('');
+  const [leaveErrorNotebookId, setLeaveErrorNotebookId] = useState<string | null>(null);
 
   // E2EE States
   const [createPassword, setCreatePassword] = useState('');
   const [joinPassword, setJoinPassword] = useState('');
   const [unlockPassword, setUnlockPassword] = useState('');
   const [unlockError, setUnlockError] = useState('');
+  const [unlockErrorNotebookId, setUnlockErrorNotebookId] = useState<string | null>(null);
   const [unlockLoading, setUnlockLoading] = useState(false);
   
   // Setup inputs
@@ -33,8 +39,28 @@ export default function HomePage() {
   const [isAlone, setIsAlone] = useState(false);
   const [copied, setCopied] = useState(false);
   const fetchSeqRef = useRef(0);
+  const activeNotebookRef = useRef<string | null>(null);
 
   const router = useRouter();
+
+  useEffect(() => {
+    activeNotebookRef.current = notebookId;
+  }, [notebookId]);
+
+  const setSetupErrorForCurrent = (message: string) => {
+    setSetupErrorNotebookId(notebookId);
+    setSetupError(message);
+  };
+
+  const setLeaveErrorForCurrent = (message: string) => {
+    setLeaveErrorNotebookId(notebookId);
+    setLeaveError(message);
+  };
+
+  const setUnlockErrorForCurrent = (message: string) => {
+    setUnlockErrorNotebookId(notebookId);
+    setUnlockError(message);
+  };
 
   useEffect(() => {
     if (!user || notebookId !== null || !fetching || loading) return;
@@ -55,15 +81,16 @@ export default function HomePage() {
   // Fetch notebook entries
   const fetchEntries = useCallback(async () => {
     if (!user || !notebookId) return;
+    const notebookIdAtCall = notebookId;
     const fetchSeq = ++fetchSeqRef.current;
 
-    const keys = getNotebookKeyring(notebookId);
+    const keys = getNotebookKeyring(notebookIdAtCall);
 
     if (isDemoMode) {
       const mockEntriesStr = localStorage.getItem('mock_notebook_entries') || '[]';
       const mockEntries: NotebookEntry[] = JSON.parse(mockEntriesStr);
       // Filter entries belonging to this specific notebook
-      const filtered = mockEntries.filter((e) => e.notebook_id === notebookId);
+      const filtered = mockEntries.filter((e) => e.notebook_id === notebookIdAtCall);
       
       const decrypted = await Promise.all(
         filtered.map(async (e) => {
@@ -83,7 +110,7 @@ export default function HomePage() {
       const { data, error } = await supabase
         .from('notebook_entries')
         .select('*')
-        .eq('notebook_id', notebookId)
+        .eq('notebook_id', notebookIdAtCall)
         .order('created_at', { ascending: true });
 
       if (error) {
@@ -95,14 +122,14 @@ export default function HomePage() {
             return { ...e, content: dec };
           })
         );
-        if (fetchSeq === fetchSeqRef.current) {
+        if (fetchSeq === fetchSeqRef.current && activeNotebookRef.current === notebookIdAtCall) {
           setEntries(decrypted);
         }
       }
     } catch (err) {
       console.error('Failed to fetch entries:', err);
     } finally {
-      if (fetchSeq === fetchSeqRef.current) {
+      if (fetchSeq === fetchSeqRef.current && activeNotebookRef.current === notebookIdAtCall) {
         setFetching(false);
       }
     }
@@ -111,18 +138,19 @@ export default function HomePage() {
   // Check pairing status (invite code & member count)
   const checkPairingStatus = useCallback(async () => {
     if (!user || !notebookId) return;
+    const notebookIdAtCall = notebookId;
 
     if (isDemoMode) {
       // Load invite code
       const mockNotebooksStr = localStorage.getItem('mock_notebooks') || '[]';
       const mockNotebooks: MockNotebook[] = JSON.parse(mockNotebooksStr);
-      const activeNotebook = mockNotebooks.find((n) => n.id === notebookId);
+      const activeNotebook = mockNotebooks.find((n) => n.id === notebookIdAtCall);
       setInviteCode(activeNotebook?.invite_code || null);
 
       // Count members
       const mockMembersStr = localStorage.getItem('mock_notebook_members') || '[]';
       const mockMembers: MockNotebookMember[] = JSON.parse(mockMembersStr);
-      const membersCount = mockMembers.filter((m) => m.notebook_id === notebookId).length;
+      const membersCount = mockMembers.filter((m) => m.notebook_id === notebookIdAtCall).length;
       setIsAlone(membersCount < 2);
       return;
     }
@@ -132,7 +160,7 @@ export default function HomePage() {
       const { data: notebook, error: nError } = await supabase
         .from('notebooks')
         .select('invite_code')
-        .eq('id', notebookId)
+        .eq('id', notebookIdAtCall)
         .single();
 
       if (!nError && notebook) {
@@ -143,7 +171,7 @@ export default function HomePage() {
       const { count, error: cError } = await supabase
         .from('notebook_members')
         .select('*', { count: 'exact', head: true })
-        .eq('notebook_id', notebookId);
+        .eq('notebook_id', notebookIdAtCall);
 
       if (!cError && count !== null) {
         setIsAlone(count < 2);
@@ -156,6 +184,7 @@ export default function HomePage() {
   // Fetch entries and subscribe on mount / notebookId change
   useEffect(() => {
     if (user && notebookId) {
+      const notebookIdAtEffect = notebookId;
       const kickoff = window.setTimeout(() => {
         fetchEntries();
         checkPairingStatus();
@@ -164,9 +193,10 @@ export default function HomePage() {
       if (isDemoMode) {
         // LocalStorage change listener for syncing sekmeler/tabs
         const handleStorageChange = (e: StorageEvent) => {
+          if (activeNotebookRef.current !== notebookIdAtEffect) return;
           if (e.key === 'mock_notebook_entries') {
             fetchEntries();
-          } else if (e.key === 'mock_notebook_members') {
+          } else if (e.key === 'mock_notebook_members' || e.key === 'mock_notebook_members_trigger') {
             checkPairingStatus();
           }
         };
@@ -186,9 +216,10 @@ export default function HomePage() {
             event: '*',
             schema: 'public',
             table: 'notebook_entries',
-            filter: `notebook_id=eq.${notebookId}`,
+            filter: `notebook_id=eq.${notebookIdAtEffect}`,
           },
           () => {
+            if (activeNotebookRef.current !== notebookIdAtEffect) return;
             fetchEntries();
           }
         )
@@ -198,9 +229,10 @@ export default function HomePage() {
             event: '*',
             schema: 'public',
             table: 'notebook_members',
-            filter: `notebook_id=eq.${notebookId}`,
+            filter: `notebook_id=eq.${notebookIdAtEffect}`,
           },
           () => {
+            if (activeNotebookRef.current !== notebookIdAtEffect) return;
             checkPairingStatus();
           }
         )
@@ -216,10 +248,10 @@ export default function HomePage() {
   // Handle notebook creation
   const handleCreateNotebook = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newNotebookName.trim() || !user || !createPassword.trim()) return;
+    if (!newNotebookName.trim() || !user || !createPassword.trim() || leaveLoading) return;
 
     setSetupLoading(true);
-    setSetupError('');
+    setSetupErrorForCurrent('');
 
     try {
       const userEmail = user.email?.trim().toLowerCase();
@@ -287,8 +319,7 @@ export default function HomePage() {
       }
     } catch (err: unknown) {
       console.error('Failed to create notebook:', err);
-      const message = err instanceof Error ? err.message : 'Could not create notebook. Please try again.';
-      setSetupError(message);
+      setSetupErrorForCurrent(mapErrorToUserMessage(err, 'create'));
     } finally {
       setSetupLoading(false);
     }
@@ -297,10 +328,10 @@ export default function HomePage() {
   // Handle notebook joining
   const handleJoinNotebook = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inviteCodeInput.trim() || !user || !joinPassword.trim()) return;
+    if (!inviteCodeInput.trim() || !user || !joinPassword.trim() || leaveLoading) return;
 
     setSetupLoading(true);
-    setSetupError('');
+    setSetupErrorForCurrent('');
 
     try {
       const code = inviteCodeInput.trim();
@@ -315,7 +346,7 @@ export default function HomePage() {
         const targetNotebook = mockNotebooks.find((n) => n.invite_code.toLowerCase() === code.toLowerCase());
 
         if (!targetNotebook) {
-          setSetupError('Invalid invite code. Try using user1 or user2 invite codes if already generated.');
+          setSetupErrorForCurrent('Kod gecersiz. Lutfen davet kodunu kontrol edin.');
           setSetupLoading(false);
           return;
         }
@@ -325,7 +356,7 @@ export default function HomePage() {
         const existingMembers = mockMembers.filter((m) => m.notebook_id === targetNotebook.id);
 
         if (existingMembers.length >= 2) {
-          setSetupError('This notebook is already full (maximum 2 partners).');
+          setSetupErrorForCurrent('Bu kitap dolu (en fazla 2 kisi).');
           setSetupLoading(false);
           return;
         }
@@ -358,7 +389,7 @@ export default function HomePage() {
         if (nError) throw nError;
         
         if (!notebook) {
-          setSetupError('Invalid invite code. Please check and try again.');
+          setSetupErrorForCurrent('Kod gecersiz. Lutfen davet kodunu kontrol edin.');
           setSetupLoading(false);
           return;
         }
@@ -373,8 +404,8 @@ export default function HomePage() {
           });
 
         if (mError) {
-          if (mError.code === '42501' || mError.message.includes('row-level security')) {
-            setSetupError('This notebook is already full or you cannot join.');
+          if (mError.code === '42501' || mError.message.toLowerCase().includes('row-level security')) {
+            setSetupErrorForCurrent('Yetki problemi: Bu kitaba katilma izniniz yok.');
           } else {
             throw mError;
           }
@@ -388,8 +419,7 @@ export default function HomePage() {
       }
     } catch (err: unknown) {
       console.error('Failed to join notebook:', err);
-      const message = err instanceof Error ? err.message : 'Could not join notebook. Please try again.';
-      setSetupError(message);
+      setSetupErrorForCurrent(mapErrorToUserMessage(err, 'join'));
     } finally {
       setSetupLoading(false);
     }
@@ -398,10 +428,10 @@ export default function HomePage() {
   // Handle notebook unlocking
   const handleUnlockNotebook = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!unlockPassword.trim()) return;
+    if (!unlockPassword.trim() || leaveLoading) return;
 
     setUnlockLoading(true);
-    setUnlockError('');
+    setUnlockErrorForCurrent('');
 
     try {
       // Verify password against a raw encrypted entry from storage/db
@@ -430,7 +460,7 @@ export default function HomePage() {
       if (sampleEncryptedContent) {
         const decrypted = await decryptContent(sampleEncryptedContent, unlockPassword.trim());
         if (decrypted === DECRYPTION_FAILED_MARKER) {
-          setUnlockError('Invalid password. Please make sure you entered the shared password correctly.');
+          setUnlockErrorForCurrent('Invalid password. Please make sure you entered the shared password correctly.');
           setUnlockLoading(false);
           return;
         }
@@ -442,7 +472,7 @@ export default function HomePage() {
       await fetchEntries();
     } catch (err) {
       console.error('Failed to unlock notebook:', err);
-      setUnlockError('An error occurred during unlocking. Please try again.');
+      setUnlockErrorForCurrent(mapErrorToUserMessage(err, 'unlock'));
     } finally {
       setUnlockLoading(false);
     }
@@ -455,6 +485,52 @@ export default function HomePage() {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const handleLeaveNotebook = async () => {
+    if (!user || !notebookId || leaveLoading) return;
+
+    const confirmed = window.confirm(
+      'Bu kitaptan ayrilmak istediginize emin misiniz? Sadece uyelikten ayrilirsiniz, icerik silinmez. Demo modda kitapta son uye sizseniz yerel veriler temizlenir.'
+    );
+    if (!confirmed) return;
+
+    setLeaveLoading(true);
+    setLeaveErrorForCurrent('');
+
+    try {
+      const currentNotebookId = notebookId;
+
+      if (isDemoMode) {
+        leaveCurrentNotebookInDemoMode(currentNotebookId, user.id);
+        localStorage.removeItem(`notebook_key_${currentNotebookId}`);
+        localStorage.removeItem(`notebook_keyring_${currentNotebookId}`);
+        setMockNotebookId(null);
+      } else {
+        const { error } = await supabase
+          .from('notebook_members')
+          .delete()
+          .eq('notebook_id', currentNotebookId)
+          .eq('user_id', user.id);
+
+        if (error) throw error;
+
+        localStorage.removeItem(`notebook_key_${currentNotebookId}`);
+        localStorage.removeItem(`notebook_keyring_${currentNotebookId}`);
+        const refreshedId = await refreshNotebookId();
+        if (refreshedId === currentNotebookId) {
+          setMockNotebookId(null);
+        }
+      }
+
+      setEntries([]);
+      setInviteCode(null);
+      setIsAlone(false);
+    } catch (err) {
+      console.error('Failed to leave notebook:', err);
+      setLeaveErrorForCurrent(mapErrorToUserMessage(err, 'leave'));
+    } finally {
+      setLeaveLoading(false);
+    }
+  };
   // 1. Loading state
   if (user && notebookId === null && fetching) {
     return (
@@ -542,7 +618,7 @@ export default function HomePage() {
               <div className="absolute bottom-4 right-4 w-4 h-4 border-b border-r border-[#8b5a2b]/30" />
 
               <div className="space-y-8 my-auto">
-                {setupError && (
+                {setupError && setupErrorNotebookId === notebookId && (
                   <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-xs flex items-start gap-2 font-serif italic">
                     <ShieldAlert className="h-4 w-4 shrink-0 mt-0.5" />
                     <span>{setupError}</span>
@@ -560,7 +636,7 @@ export default function HomePage() {
                       value={newNotebookName}
                       onChange={(e) => setNewNotebookName(e.target.value)}
                       className="w-full px-3 py-2 bg-white/60 border border-[#e5dcd0] rounded focus:outline-none focus:ring-1 focus:ring-[#8b5a2b] font-body text-sm italic"
-                      disabled={setupLoading}
+                      disabled={setupLoading || leaveLoading}
                       required
                     />
                     <input
@@ -569,7 +645,7 @@ export default function HomePage() {
                       value={createPassword}
                       onChange={(e) => setCreatePassword(e.target.value)}
                       className="w-full px-3 py-2 bg-white/60 border border-[#e5dcd0] rounded focus:outline-none focus:ring-1 focus:ring-[#8b5a2b] font-body text-sm"
-                      disabled={setupLoading}
+                      disabled={setupLoading || leaveLoading}
                       required
                     />
                     <p className="text-[9px] text-[#8b5a2b]/60 italic font-serif leading-none">
@@ -578,7 +654,7 @@ export default function HomePage() {
                   </div>
                   <button
                     type="submit"
-                    disabled={setupLoading}
+                    disabled={setupLoading || leaveLoading}
                     className="w-full py-2 bg-[#5c3e21] hover:bg-[#483019] text-[#faf5eb] font-serif font-bold text-xs rounded transition shadow flex items-center justify-center gap-1.5 cursor-pointer"
                   >
                     {setupLoading ? 'Creating...' : <><Sparkles className="h-3.5 w-3.5" /><span>Create Private Notebook</span></>}
@@ -604,7 +680,7 @@ export default function HomePage() {
                         value={inviteCodeInput}
                         onChange={(e) => setInviteCodeInput(e.target.value)}
                         className="w-full pl-9 pr-3 py-2 bg-white/60 border border-[#e5dcd0] rounded focus:outline-none focus:ring-1 focus:ring-[#8b5a2b] font-body text-sm"
-                        disabled={setupLoading}
+                        disabled={setupLoading || leaveLoading}
                         required
                       />
                     </div>
@@ -614,13 +690,13 @@ export default function HomePage() {
                       value={joinPassword}
                       onChange={(e) => setJoinPassword(e.target.value)}
                       className="w-full px-3 py-2 bg-white/60 border border-[#e5dcd0] rounded focus:outline-none focus:ring-1 focus:ring-[#8b5a2b] font-body text-sm"
-                      disabled={setupLoading}
+                      disabled={setupLoading || leaveLoading}
                       required
                     />
                   </div>
                   <button
                     type="submit"
-                    disabled={setupLoading}
+                    disabled={setupLoading || leaveLoading}
                     className="w-full py-2 bg-[#8b5a2b] hover:bg-[#724a23] text-[#faf5eb] font-serif font-bold text-xs rounded transition shadow flex items-center justify-center gap-1.5 cursor-pointer"
                   >
                     {setupLoading ? 'Joining...' : <><Heart className="h-3.5 w-3.5" /><span>Unlock & Enter Notebook</span></>}
@@ -648,12 +724,21 @@ export default function HomePage() {
             <BookOpen className="h-6 w-6 text-[#d9a05b]" />
             <h2 className="font-serif italic text-xl tracking-wider text-[#d9a05b]">Our Digital Sanctuary</h2>
           </div>
-          <button
-            onClick={signOut}
-            className="px-3 py-1.5 bg-red-950/20 hover:bg-red-950/40 border border-red-900/30 text-red-400 text-xs font-bold rounded-full transition cursor-pointer"
-          >
-            Sign Out
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleLeaveNotebook}
+              disabled={leaveLoading}
+              className="px-3 py-1.5 bg-[#5c3e21]/30 hover:bg-[#5c3e21]/50 border border-[#8b5a2b]/40 text-[#f3dcb8] text-xs font-bold rounded-full transition cursor-pointer disabled:opacity-60"
+            >
+              {leaveLoading ? 'Leaving...' : 'Leave Notebook'}
+            </button>
+            <button
+              onClick={signOut}
+              className="px-3 py-1.5 bg-red-950/20 hover:bg-red-950/40 border border-red-900/30 text-red-400 text-xs font-bold rounded-full transition cursor-pointer"
+            >
+              Sign Out
+            </button>
+          </div>
         </div>
 
         {/* Notebook Leather Cover Container */}
@@ -686,7 +771,7 @@ export default function HomePage() {
                 </p>
               </div>
 
-              {unlockError && (
+              {unlockError && unlockErrorNotebookId === notebookId && (
                 <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-xs flex items-start gap-2 font-serif italic">
                   <ShieldAlert className="h-4 w-4 shrink-0 mt-0.5" />
                   <span>{unlockError}</span>
@@ -704,14 +789,14 @@ export default function HomePage() {
                     value={unlockPassword}
                     onChange={(e) => setUnlockPassword(e.target.value)}
                     className="w-full px-3 py-2 bg-white border border-[#e5dcd0] rounded focus:outline-none focus:ring-1 focus:ring-[#8b5a2b] font-body text-sm"
-                    disabled={unlockLoading}
+                    disabled={unlockLoading || leaveLoading}
                     required
                   />
                 </div>
 
                 <button
                   type="submit"
-                  disabled={unlockLoading}
+                  disabled={unlockLoading || leaveLoading}
                   className="w-full py-2 bg-[#5c3e21] hover:bg-[#483019] text-[#faf5eb] font-serif font-bold text-xs rounded transition shadow flex items-center justify-center gap-1.5 cursor-pointer"
                 >
                   {unlockLoading ? 'Unlocking...' : <><Sparkles className="h-3.5 w-3.5" /><span>Unlock Sanctuary</span></>}
@@ -739,6 +824,23 @@ export default function HomePage() {
 
       {/* Main Notebook */}
       <div className="w-full max-w-6xl z-10 flex flex-col items-center">
+        <div className="w-full max-w-2xl mb-4 flex justify-end">
+          <button
+            onClick={handleLeaveNotebook}
+            disabled={leaveLoading}
+            className="px-3 py-1.5 bg-[#5c3e21]/90 hover:bg-[#483019] text-[#faf5eb] border border-[#8b5a2b]/60 text-xs font-semibold rounded-md transition cursor-pointer disabled:opacity-60 flex items-center gap-1.5"
+          >
+            <LogOut className="h-3.5 w-3.5" />
+            <span>{leaveLoading ? 'Leaving notebook...' : 'Leave this notebook'}</span>
+          </button>
+        </div>
+
+        {leaveError && leaveErrorNotebookId === notebookId && (
+          <div className="mb-4 w-full max-w-2xl p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-xs flex items-start gap-2 font-serif italic">
+            <ShieldAlert className="h-4 w-4 shrink-0 mt-0.5" />
+            <span>{leaveError}</span>
+          </div>
+        )}
         
         {/* Waiting for partner banner sticky note */}
         {isAlone && inviteCode && (
@@ -794,3 +896,5 @@ function ShieldAlert(props: React.SVGProps<SVGSVGElement>) {
     </svg>
   );
 }
+
+
