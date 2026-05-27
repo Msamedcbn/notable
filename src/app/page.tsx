@@ -333,37 +333,20 @@ export default function HomePage() {
         // 3. Update auth state
         setMockNotebookId(generatedId);
       } else {
-        // Supabase Mode
-        // 1. Create notebook
-        const { data: notebook, error: nError } = await withTimeout(
-          supabase
-            .from('notebooks')
-            .insert({ name: newNotebookName.trim() })
-            .select()
-            .single(),
+        const { data: notebookIdResult, error: rpcError } = await withTimeout(
+          supabase.rpc('create_notebook_with_owner', {
+            notebook_name: newNotebookName.trim(),
+            member_email: userEmail,
+          }),
           DEFAULT_TIMEOUT_MS,
           'CREATE_NOTEBOOK_TIMEOUT'
         );
 
-        if (nError) throw nError;
-
-        // 2. Create membership
-        const { error: mError } = await withTimeout(
-          supabase
-            .from('notebook_members')
-            .insert({
-              notebook_id: notebook.id,
-              user_id: user.id,
-              user_email: userEmail
-            }),
-          DEFAULT_TIMEOUT_MS,
-          'CREATE_MEMBERSHIP_TIMEOUT'
-        );
-
-        if (mError) throw mError;
+        if (rpcError) throw rpcError;
+        if (!notebookIdResult) throw new Error('CREATE_NOTEBOOK_FAILED');
 
         // Save key locally
-        rememberNotebookKey(notebook.id, createPassword.trim());
+        rememberNotebookKey(String(notebookIdResult), createPassword.trim());
 
         // 3. Refresh Auth State
         await refreshNotebookId();
@@ -432,93 +415,41 @@ export default function HomePage() {
         // Trigger storage event so that both sekmeler update!
         localStorage.setItem('mock_notebook_members_trigger', Date.now().toString());
       } else {
-        // Supabase Mode
-        // 1. Fetch notebook by invite code
-        const { data: notebook, error: nError } = await withTimeout(
-          supabase
-            .from('notebooks')
-            .select('*')
-            .eq('invite_code', code)
-            .maybeSingle(),
+        const { data: joinResult, error: joinError } = await withTimeout(
+          supabase.rpc('join_notebook_by_invite', {
+            invite_code_input: code,
+            member_email: userEmail,
+          }),
           DEFAULT_TIMEOUT_MS,
-          'LOOKUP_NOTEBOOK_TIMEOUT'
+          'JOIN_NOTEBOOK_TIMEOUT'
         );
 
-        if (nError) throw nError;
-        
-        if (!notebook) {
-          setSetupErrorForCurrent('Kod gecersiz. Lutfen davet kodunu kontrol edin.');
-          return;
-        }
-
-        // 2. Check if this user is already a member first.
-        const { data: existingMembership, error: existingMembershipError } = await withTimeout(
-          supabase
-            .from('notebook_members')
-            .select('notebook_id')
-            .eq('notebook_id', notebook.id)
-            .eq('user_id', user.id)
-            .maybeSingle(),
-          DEFAULT_TIMEOUT_MS,
-          'CHECK_ALREADY_MEMBER_TIMEOUT'
-        );
-
-        if (existingMembershipError) throw existingMembershipError;
-
-        if (existingMembership) {
-          rememberNotebookKey(notebook.id, joinPassword.trim());
-          await refreshNotebookId();
-          return;
-        }
-
-        // 3. Check capacity explicitly so users get a clear message before policy-level rejection.
-        const { count, error: countError } = await withTimeout(
-          supabase
-            .from('notebook_members')
-            .select('*', { count: 'exact', head: true })
-            .eq('notebook_id', notebook.id),
-          DEFAULT_TIMEOUT_MS,
-          'COUNT_MEMBERS_TIMEOUT'
-        );
-
-        if (countError) throw countError;
-        if ((count ?? 0) >= 2) {
-          setSetupErrorForCurrent('Bu kitap dolu (en fazla 2 kisi).');
-          return;
-        }
-
-        // 4. Join notebook
-        const { error: mError } = await withTimeout(
-          supabase
-            .from('notebook_members')
-            .insert({
-              notebook_id: notebook.id,
-              user_id: user.id,
-              user_email: userEmail
-            }),
-          DEFAULT_TIMEOUT_MS,
-          'JOIN_MEMBERSHIP_TIMEOUT'
-        );
-
-        if (mError) {
-          if (mError.code === '23505') {
-            // Race-safe behavior: membership already exists, treat as success.
-            rememberNotebookKey(notebook.id, joinPassword.trim());
-            await refreshNotebookId();
+        if (joinError) {
+          const raw = (joinError.message || '').toUpperCase();
+          if (raw.includes('INVALID_INVITE_CODE')) {
+            setSetupErrorForCurrent('Kod gecersiz. Lutfen davet kodunu kontrol edin.');
             return;
           }
-          if (mError.code === '42501' || mError.message.toLowerCase().includes('row-level security')) {
-            setSetupErrorForCurrent('Yetki problemi: Bu kitaba katilma izniniz yok.');
-          } else {
-            throw mError;
+          if (raw.includes('NOTEBOOK_FULL')) {
+            setSetupErrorForCurrent('Bu kitap dolu (en fazla 2 kisi).');
+            return;
           }
-        } else {
-          // Save key locally
-          rememberNotebookKey(notebook.id, joinPassword.trim());
-
-          // 4. Refresh Auth state
-          await refreshNotebookId();
+          if (joinError.code === '42501' || raw.includes('ROW-LEVEL SECURITY')) {
+            setSetupErrorForCurrent('Yetki problemi: Bu kitaba katilma izniniz yok.');
+            return;
+          }
+          throw joinError;
         }
+
+        const row = Array.isArray(joinResult) ? joinResult[0] : joinResult;
+        const targetNotebookId = row?.notebook_id;
+        if (!targetNotebookId) {
+          throw new Error('JOIN_NOTEBOOK_FAILED');
+        }
+
+        // Save key locally
+        rememberNotebookKey(targetNotebookId, joinPassword.trim());
+        await refreshNotebookId();
       }
     }).catch((err: unknown) => {
       console.error('Failed to join notebook:', err);
