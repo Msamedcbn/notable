@@ -90,6 +90,132 @@ export default function HomePage() {
     }
   };
 
+  const isRpcMissingError = (err: unknown): boolean => {
+    const code = typeof err === 'object' && err !== null && 'code' in err ? String((err as { code: unknown }).code) : '';
+    const message =
+      typeof err === 'object' && err !== null && 'message' in err ? String((err as { message: unknown }).message).toLowerCase() : '';
+
+    return (
+      code === 'PGRST202' ||
+      message.includes('could not find the function') ||
+      message.includes('function') && message.includes('not found') ||
+      message.includes('schema cache')
+    );
+  };
+
+  const createViaFallback = async (notebookName: string, userEmail: string, password: string) => {
+    const { data: notebook, error: nError } = await withTimeout(
+      supabase
+        .from('notebooks')
+        .insert({ name: notebookName })
+        .select()
+        .single(),
+      DEFAULT_TIMEOUT_MS,
+      'FALLBACK_CREATE_NOTEBOOK_TIMEOUT'
+    );
+
+    if (nError) throw nError;
+
+    const { error: mError } = await withTimeout(
+      supabase
+        .from('notebook_members')
+        .insert({
+          notebook_id: notebook.id,
+          user_id: user!.id,
+          user_email: userEmail,
+        }),
+      DEFAULT_TIMEOUT_MS,
+      'FALLBACK_CREATE_MEMBERSHIP_TIMEOUT'
+    );
+
+    if (mError) throw mError;
+
+    rememberNotebookKey(notebook.id, password);
+    await refreshNotebookId();
+  };
+
+  const joinViaFallback = async (code: string, userEmail: string, password: string) => {
+    const { data: notebook, error: nError } = await withTimeout(
+      supabase
+        .from('notebooks')
+        .select('*')
+        .eq('invite_code', code)
+        .maybeSingle(),
+      DEFAULT_TIMEOUT_MS,
+      'FALLBACK_LOOKUP_NOTEBOOK_TIMEOUT'
+    );
+
+    if (nError) throw nError;
+
+    if (!notebook) {
+      setSetupErrorForCurrent('Kod gecersiz. Lutfen davet kodunu kontrol edin.');
+      return;
+    }
+
+    const { data: existingMembership, error: existingMembershipError } = await withTimeout(
+      supabase
+        .from('notebook_members')
+        .select('notebook_id')
+        .eq('notebook_id', notebook.id)
+        .eq('user_id', user!.id)
+        .maybeSingle(),
+      DEFAULT_TIMEOUT_MS,
+      'FALLBACK_CHECK_ALREADY_MEMBER_TIMEOUT'
+    );
+
+    if (existingMembershipError) throw existingMembershipError;
+
+    if (existingMembership) {
+      rememberNotebookKey(notebook.id, password);
+      await refreshNotebookId();
+      return;
+    }
+
+    const { count, error: countError } = await withTimeout(
+      supabase
+        .from('notebook_members')
+        .select('*', { count: 'exact', head: true })
+        .eq('notebook_id', notebook.id),
+      DEFAULT_TIMEOUT_MS,
+      'FALLBACK_COUNT_MEMBERS_TIMEOUT'
+    );
+
+    if (countError) throw countError;
+
+    if ((count ?? 0) >= 2) {
+      setSetupErrorForCurrent('Bu kitap dolu (en fazla 2 kisi).');
+      return;
+    }
+
+    const { error: mError } = await withTimeout(
+      supabase
+        .from('notebook_members')
+        .insert({
+          notebook_id: notebook.id,
+          user_id: user!.id,
+          user_email: userEmail,
+        }),
+      DEFAULT_TIMEOUT_MS,
+      'FALLBACK_JOIN_MEMBERSHIP_TIMEOUT'
+    );
+
+    if (mError) {
+      if (mError.code === '23505') {
+        rememberNotebookKey(notebook.id, password);
+        await refreshNotebookId();
+        return;
+      }
+      if (mError.code === '42501' || mError.message.toLowerCase().includes('row-level security')) {
+        setSetupErrorForCurrent('Yetki problemi: Bu kitaba katilma izniniz yok.');
+        return;
+      }
+      throw mError;
+    }
+
+    rememberNotebookKey(notebook.id, password);
+    await refreshNotebookId();
+  };
+
   useEffect(() => {
     if (!user || notebookId !== null || !fetching || loading) return;
 
@@ -342,7 +468,13 @@ export default function HomePage() {
           'CREATE_NOTEBOOK_TIMEOUT'
         );
 
-        if (rpcError) throw rpcError;
+        if (rpcError) {
+          if (isRpcMissingError(rpcError)) {
+            await createViaFallback(newNotebookName.trim(), userEmail, createPassword.trim());
+            return;
+          }
+          throw rpcError;
+        }
         if (!notebookIdResult) throw new Error('CREATE_NOTEBOOK_FAILED');
 
         // Save key locally
@@ -425,6 +557,10 @@ export default function HomePage() {
         );
 
         if (joinError) {
+          if (isRpcMissingError(joinError)) {
+            await joinViaFallback(code, userEmail, joinPassword.trim());
+            return;
+          }
           const raw = (joinError.message || '').toUpperCase();
           if (raw.includes('INVALID_INVITE_CODE')) {
             setSetupErrorForCurrent('Kod gecersiz. Lutfen davet kodunu kontrol edin.');
