@@ -169,7 +169,7 @@ export default function HomePage() {
       supabase
         .from('notebooks')
         .select('*')
-        .eq('invite_code', code)
+        .ilike('invite_code', code)
         .maybeSingle(),
       DEFAULT_TIMEOUT_MS,
       'FALLBACK_LOOKUP_NOTEBOOK_TIMEOUT'
@@ -539,11 +539,10 @@ export default function HomePage() {
         );
 
         if (rpcError) {
-          if (isRpcMissingError(rpcError)) {
-            await createViaFallback(newNotebookName.trim(), userEmail, createPassword.trim());
-            return;
-          }
-          throw rpcError;
+          // Production safety: if RPC path fails for any reason, immediately try fallback path.
+          console.warn('RPC create failed, falling back to direct create flow:', rpcError);
+          await createViaFallback(newNotebookName.trim(), userEmail, createPassword.trim());
+          return;
         }
         if (!notebookIdResult) throw new Error('CREATE_NOTEBOOK_FAILED');
 
@@ -624,10 +623,6 @@ export default function HomePage() {
         );
 
         if (joinError) {
-          if (isRpcMissingError(joinError)) {
-            await joinViaFallback(code, userEmail, joinPassword.trim());
-            return;
-          }
           const raw = (joinError.message || '').toUpperCase();
           if (raw.includes('INVALID_INVITE_CODE')) {
             setSetupErrorForCurrent('Kod gecersiz. Lutfen davet kodunu kontrol edin.', 'join');
@@ -641,7 +636,11 @@ export default function HomePage() {
             setSetupErrorForCurrent('Yetki problemi: Bu kitaba katilma izniniz yok.', 'join');
             return;
           }
-          throw joinError;
+
+          // Production safety: if RPC path fails for non-business reasons, try fallback path.
+          console.warn('RPC join failed, falling back to direct join flow:', joinError);
+          await joinViaFallback(code, userEmail, joinPassword.trim());
+          return;
         }
 
         const row = Array.isArray(joinResult) ? joinResult[0] : joinResult;
