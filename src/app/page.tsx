@@ -20,6 +20,7 @@ export default function HomePage() {
   const [setupLocked, setSetupLocked] = useState(false);
   const [setupMode, setSetupMode] = useState<'create' | 'join' | null>(null);
   const [setupError, setSetupError] = useState('');
+  const [setupErrorSource, setSetupErrorSource] = useState<'create' | 'join' | null>(null);
   const [setupErrorNotebookId, setSetupErrorNotebookId] = useState<string | null>(null);
   const [leaveLoading, setLeaveLoading] = useState(false);
   const [leaveError, setLeaveError] = useState('');
@@ -51,8 +52,9 @@ export default function HomePage() {
     activeNotebookRef.current = notebookId;
   }, [notebookId]);
 
-  const setSetupErrorForCurrent = (message: string) => {
+  const setSetupErrorForCurrent = (message: string, source: 'create' | 'join' | null = null) => {
     setSetupErrorNotebookId(notebookId);
+    setSetupErrorSource(source);
     setSetupError(message);
   };
 
@@ -64,6 +66,21 @@ export default function HomePage() {
   const setUnlockErrorForCurrent = (message: string) => {
     setUnlockErrorNotebookId(notebookId);
     setUnlockError(message);
+  };
+
+  const activateNotebookWithRetry = async (targetNotebookId: string, key: string) => {
+    rememberNotebookKey(targetNotebookId, key);
+
+    for (let i = 0; i < 3; i++) {
+      const activeId = await refreshNotebookId();
+      if (activeId === targetNotebookId) return;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+
+    // Last-resort recovery for environments with delayed auth/session propagation.
+    if (typeof window !== 'undefined') {
+      window.location.reload();
+    }
   };
 
   const runSetupAction = async (mode: 'create' | 'join', action: () => Promise<void>) => {
@@ -78,7 +95,7 @@ export default function HomePage() {
     setSetupLocked(true);
     setSetupLoading(true);
     setSetupMode(mode);
-    setSetupErrorForCurrent('');
+    setSetupErrorForCurrent('', null);
 
     try {
       await action();
@@ -130,8 +147,7 @@ export default function HomePage() {
 
     if (mError) throw mError;
 
-    rememberNotebookKey(notebook.id, password);
-    await refreshNotebookId();
+    await activateNotebookWithRetry(notebook.id, password);
   };
 
   const joinViaFallback = async (code: string, userEmail: string, password: string) => {
@@ -148,7 +164,7 @@ export default function HomePage() {
     if (nError) throw nError;
 
     if (!notebook) {
-      setSetupErrorForCurrent('Kod gecersiz. Lutfen davet kodunu kontrol edin.');
+      setSetupErrorForCurrent('Kod gecersiz. Lutfen davet kodunu kontrol edin.', 'join');
       return;
     }
 
@@ -183,7 +199,7 @@ export default function HomePage() {
     if (countError) throw countError;
 
     if ((count ?? 0) >= 2) {
-      setSetupErrorForCurrent('Bu kitap dolu (en fazla 2 kisi).');
+      setSetupErrorForCurrent('Bu kitap dolu (en fazla 2 kisi).', 'join');
       return;
     }
 
@@ -206,7 +222,7 @@ export default function HomePage() {
         return;
       }
       if (mError.code === '42501' || mError.message.toLowerCase().includes('row-level security')) {
-        setSetupErrorForCurrent('Yetki problemi: Bu kitaba katilma izniniz yok.');
+        setSetupErrorForCurrent('Yetki problemi: Bu kitaba katilma izniniz yok.', 'join');
         return;
       }
       throw mError;
@@ -423,10 +439,7 @@ export default function HomePage() {
     if (!newNotebookName.trim() || !user || !createPassword.trim() || leaveLoading) return;
 
     await runSetupAction('create', async () => {
-      const userEmail = user.email?.trim().toLowerCase();
-      if (!userEmail) {
-        throw new Error('Kullanici e-posta bilgisi okunamadi. Lutfen tekrar giris yapin.');
-      }
+      const userEmail = user.email?.trim().toLowerCase() || `${user.id}@local.notable`;
 
       const generatedId = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : Math.random().toString(36).substring(2);
       
@@ -477,15 +490,12 @@ export default function HomePage() {
         }
         if (!notebookIdResult) throw new Error('CREATE_NOTEBOOK_FAILED');
 
-        // Save key locally
-        rememberNotebookKey(String(notebookIdResult), createPassword.trim());
-
-        // 3. Refresh Auth State
-        await refreshNotebookId();
+        // Save key locally and ensure active notebook becomes visible.
+        await activateNotebookWithRetry(String(notebookIdResult), createPassword.trim());
       }
     }).catch((err: unknown) => {
       console.error('Failed to create notebook:', err);
-      setSetupErrorForCurrent(mapErrorToUserMessage(err, 'create'));
+      setSetupErrorForCurrent(mapErrorToUserMessage(err, 'create'), 'create');
     });
   };
 
@@ -496,10 +506,7 @@ export default function HomePage() {
 
     await runSetupAction('join', async () => {
       const code = inviteCodeInput.trim();
-      const userEmail = user.email?.trim().toLowerCase();
-      if (!userEmail) {
-        throw new Error('Kullanici e-posta bilgisi okunamadi. Lutfen tekrar giris yapin.');
-      }
+      const userEmail = user.email?.trim().toLowerCase() || `${user.id}@local.notable`;
 
       if (isDemoMode) {
         const mockNotebooksStr = localStorage.getItem('mock_notebooks') || '[]';
@@ -507,7 +514,7 @@ export default function HomePage() {
         const targetNotebook = mockNotebooks.find((n) => n.invite_code.toLowerCase() === code.toLowerCase());
 
         if (!targetNotebook) {
-          setSetupErrorForCurrent('Kod gecersiz. Lutfen davet kodunu kontrol edin.');
+          setSetupErrorForCurrent('Kod gecersiz. Lutfen davet kodunu kontrol edin.', 'join');
           return;
         }
 
@@ -526,7 +533,7 @@ export default function HomePage() {
         const existingMembers = mockMembers.filter((m) => m.notebook_id === targetNotebook.id);
 
         if (existingMembers.length >= 2) {
-          setSetupErrorForCurrent('Bu kitap dolu (en fazla 2 kisi).');
+          setSetupErrorForCurrent('Bu kitap dolu (en fazla 2 kisi).', 'join');
           return;
         }
 
@@ -563,15 +570,15 @@ export default function HomePage() {
           }
           const raw = (joinError.message || '').toUpperCase();
           if (raw.includes('INVALID_INVITE_CODE')) {
-            setSetupErrorForCurrent('Kod gecersiz. Lutfen davet kodunu kontrol edin.');
+            setSetupErrorForCurrent('Kod gecersiz. Lutfen davet kodunu kontrol edin.', 'join');
             return;
           }
           if (raw.includes('NOTEBOOK_FULL')) {
-            setSetupErrorForCurrent('Bu kitap dolu (en fazla 2 kisi).');
+            setSetupErrorForCurrent('Bu kitap dolu (en fazla 2 kisi).', 'join');
             return;
           }
           if (joinError.code === '42501' || raw.includes('ROW-LEVEL SECURITY')) {
-            setSetupErrorForCurrent('Yetki problemi: Bu kitaba katilma izniniz yok.');
+            setSetupErrorForCurrent('Yetki problemi: Bu kitaba katilma izniniz yok.', 'join');
             return;
           }
           throw joinError;
@@ -583,13 +590,12 @@ export default function HomePage() {
           throw new Error('JOIN_NOTEBOOK_FAILED');
         }
 
-        // Save key locally
-        rememberNotebookKey(targetNotebookId, joinPassword.trim());
-        await refreshNotebookId();
+        // Save key locally and ensure active notebook becomes visible.
+        await activateNotebookWithRetry(targetNotebookId, joinPassword.trim());
       }
     }).catch((err: unknown) => {
       console.error('Failed to join notebook:', err);
-      setSetupErrorForCurrent(mapErrorToUserMessage(err, 'join'));
+      setSetupErrorForCurrent(mapErrorToUserMessage(err, 'join'), 'join');
     });
   };
 
@@ -794,23 +800,25 @@ export default function HomePage() {
               <div className="absolute bottom-4 right-4 w-4 h-4 border-b border-r border-[#8b5a2b]/30" />
 
               <div className="space-y-8 my-auto">
-                {setupError && setupErrorNotebookId === notebookId && (
-                  <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-xs flex items-start gap-2 font-serif italic">
-                    <ShieldAlert className="h-4 w-4 shrink-0 mt-0.5" />
-                    <span>{setupError}</span>
-                  </div>
-                )}
 
                 {/* Option 1: Create Notebook */}
-                <form onSubmit={handleCreateNotebook} className="space-y-3">
+                <form onSubmit={handleCreateNotebook} className="space-y-3" autoComplete="off">
                   <div className="space-y-2">
                     <h4 className="font-serif font-bold text-sm text-[#5c3e21] uppercase tracking-wider mb-1">Option A: Create a Notebook</h4>
                     <p className="text-[11px] text-[#8b5a2b]/80 font-serif italic">Create a new book and invite your partner.</p>
+                    {setupError && setupErrorNotebookId === notebookId && setupErrorSource === 'create' && (
+                      <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-xs flex items-start gap-2 font-serif italic">
+                        <ShieldAlert className="h-4 w-4 shrink-0 mt-0.5" />
+                        <span>{setupError}</span>
+                      </div>
+                    )}
                     <input
                       type="text"
                       placeholder="Notebook Name (e.g. Our Story)"
                       value={newNotebookName}
                       onChange={(e) => setNewNotebookName(e.target.value)}
+                      autoComplete="off"
+                      name="notebook_name"
                       className="w-full px-3 py-2 bg-white/60 border border-[#e5dcd0] rounded focus:outline-none focus:ring-1 focus:ring-[#8b5a2b] font-body text-sm italic"
                       disabled={setupLoading || leaveLoading}
                       required
@@ -820,6 +828,8 @@ export default function HomePage() {
                       placeholder="Set Sanctuary Password (E2EE)"
                       value={createPassword}
                       onChange={(e) => setCreatePassword(e.target.value)}
+                      autoComplete="new-password"
+                      name="create_sanctuary_password"
                       className="w-full px-3 py-2 bg-white/60 border border-[#e5dcd0] rounded focus:outline-none focus:ring-1 focus:ring-[#8b5a2b] font-body text-sm"
                       disabled={setupLoading || leaveLoading}
                       required
@@ -844,10 +854,16 @@ export default function HomePage() {
                 </div>
 
                 {/* Option 2: Join Notebook */}
-                <form onSubmit={handleJoinNotebook} className="space-y-3">
+                <form onSubmit={handleJoinNotebook} className="space-y-3" autoComplete="off">
                   <div className="space-y-2">
                     <h4 className="font-serif font-bold text-sm text-[#5c3e21] uppercase tracking-wider mb-1">Option B: Join Existing Book</h4>
                     <p className="text-[11px] text-[#8b5a2b]/80 font-serif italic">Enter the invite code shared by your partner.</p>
+                    {setupError && setupErrorNotebookId === notebookId && setupErrorSource === 'join' && (
+                      <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-xs flex items-start gap-2 font-serif italic">
+                        <ShieldAlert className="h-4 w-4 shrink-0 mt-0.5" />
+                        <span>{setupError}</span>
+                      </div>
+                    )}
                     <div className="relative">
                       <Key className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#8b5a2b]/50" />
                       <input
@@ -855,6 +871,8 @@ export default function HomePage() {
                         placeholder="Invite Code (e.g. d7a5b3f2)"
                         value={inviteCodeInput}
                         onChange={(e) => setInviteCodeInput(e.target.value)}
+                        autoComplete="off"
+                        name="join_invite_code"
                         className="w-full pl-9 pr-3 py-2 bg-white/60 border border-[#e5dcd0] rounded focus:outline-none focus:ring-1 focus:ring-[#8b5a2b] font-body text-sm"
                         disabled={setupLoading || leaveLoading}
                         required
@@ -865,6 +883,8 @@ export default function HomePage() {
                       placeholder="Enter Sanctuary Password"
                       value={joinPassword}
                       onChange={(e) => setJoinPassword(e.target.value)}
+                      autoComplete="new-password"
+                      name="join_sanctuary_password"
                       className="w-full px-3 py-2 bg-white/60 border border-[#e5dcd0] rounded focus:outline-none focus:ring-1 focus:ring-[#8b5a2b] font-body text-sm"
                       disabled={setupLoading || leaveLoading}
                       required
