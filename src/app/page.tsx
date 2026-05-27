@@ -147,6 +147,20 @@ export default function HomePage() {
 
     if (mError) throw mError;
 
+    const { error: cleanupError } = await withTimeout(
+      supabase
+        .from('notebook_members')
+        .delete()
+        .eq('user_id', user!.id)
+        .neq('notebook_id', notebook.id),
+      DEFAULT_TIMEOUT_MS,
+      'FALLBACK_CREATE_SINGLE_MEMBERSHIP_CLEANUP_TIMEOUT'
+    );
+
+    if (cleanupError) {
+      console.warn('Single membership cleanup failed after fallback create:', cleanupError);
+    }
+
     await activateNotebookWithRetry(notebook.id, password);
   };
 
@@ -183,6 +197,20 @@ export default function HomePage() {
 
     if (existingMembership) {
       rememberNotebookKey(notebook.id, password);
+      const { error: cleanupError } = await withTimeout(
+        supabase
+          .from('notebook_members')
+          .delete()
+          .eq('user_id', user!.id)
+          .neq('notebook_id', notebook.id),
+        DEFAULT_TIMEOUT_MS,
+        'FALLBACK_ALREADY_MEMBER_SINGLE_MEMBERSHIP_CLEANUP_TIMEOUT'
+      );
+
+      if (cleanupError) {
+        console.warn('Single membership cleanup failed in already-member fallback join:', cleanupError);
+      }
+
       await refreshNotebookId();
       return;
     }
@@ -218,6 +246,20 @@ export default function HomePage() {
     if (mError) {
       if (mError.code === '23505') {
         rememberNotebookKey(notebook.id, password);
+        const { error: cleanupError } = await withTimeout(
+          supabase
+            .from('notebook_members')
+            .delete()
+            .eq('user_id', user!.id)
+            .neq('notebook_id', notebook.id),
+          DEFAULT_TIMEOUT_MS,
+          'FALLBACK_DUPLICATE_SINGLE_MEMBERSHIP_CLEANUP_TIMEOUT'
+        );
+
+        if (cleanupError) {
+          console.warn('Single membership cleanup failed after duplicate fallback join:', cleanupError);
+        }
+
         await refreshNotebookId();
         return;
       }
@@ -226,6 +268,20 @@ export default function HomePage() {
         return;
       }
       throw mError;
+    }
+
+    const { error: cleanupError } = await withTimeout(
+      supabase
+        .from('notebook_members')
+        .delete()
+        .eq('user_id', user!.id)
+        .neq('notebook_id', notebook.id),
+      DEFAULT_TIMEOUT_MS,
+      'FALLBACK_JOIN_SINGLE_MEMBERSHIP_CLEANUP_TIMEOUT'
+    );
+
+    if (cleanupError) {
+      console.warn('Single membership cleanup failed after fallback join:', cleanupError);
     }
 
     rememberNotebookKey(notebook.id, password);
@@ -456,15 +512,16 @@ export default function HomePage() {
         });
         localStorage.setItem('mock_notebooks', JSON.stringify(mockNotebooks));
 
-        // 2. Save membership details
+        // 2. Save membership details (single active membership model)
         const mockMembersStr = localStorage.getItem('mock_notebook_members') || '[]';
-        const mockMembers = JSON.parse(mockMembersStr);
-        mockMembers.push({
+        const mockMembers: MockNotebookMember[] = JSON.parse(mockMembersStr);
+        const nextMembers = mockMembers.filter((m) => m.user_id !== user.id);
+        nextMembers.push({
           notebook_id: generatedId,
           user_id: user.id,
-          user_email: user.email
+          user_email: userEmail
         });
-        localStorage.setItem('mock_notebook_members', JSON.stringify(mockMembers));
+        localStorage.setItem('mock_notebook_members', JSON.stringify(nextMembers));
 
         // Save key locally
         rememberNotebookKey(generatedId, createPassword.trim());
@@ -525,6 +582,8 @@ export default function HomePage() {
         );
 
         if (isAlreadyMember) {
+          const nextMembers = mockMembers.filter((m) => m.user_id !== user.id || m.notebook_id === targetNotebook.id);
+          localStorage.setItem('mock_notebook_members', JSON.stringify(nextMembers));
           rememberNotebookKey(targetNotebook.id, joinPassword.trim());
           setMockNotebookId(targetNotebook.id);
           return;
@@ -537,13 +596,14 @@ export default function HomePage() {
           return;
         }
 
-        // Add user as second member
-        mockMembers.push({
+        // Add user as second member and drop any previous memberships for this user.
+        const nextMembers = mockMembers.filter((m) => m.user_id !== user.id);
+        nextMembers.push({
           notebook_id: targetNotebook.id,
           user_id: user.id,
           user_email: userEmail
         });
-        localStorage.setItem('mock_notebook_members', JSON.stringify(mockMembers));
+        localStorage.setItem('mock_notebook_members', JSON.stringify(nextMembers));
 
         // Save key locally
         rememberNotebookKey(targetNotebook.id, joinPassword.trim());
@@ -926,7 +986,7 @@ export default function HomePage() {
               disabled={leaveLoading}
               className="px-3 py-1.5 bg-[#5c3e21]/30 hover:bg-[#5c3e21]/50 border border-[#8b5a2b]/40 text-[#f3dcb8] text-xs font-bold rounded-full transition cursor-pointer disabled:opacity-60"
             >
-              {leaveLoading ? 'Leaving...' : 'Leave Notebook'}
+              {leaveLoading ? 'Leaving...' : 'Leave / Delete Notebook'}
             </button>
             <button
               onClick={signOut}
@@ -1027,7 +1087,7 @@ export default function HomePage() {
             className="px-3 py-1.5 bg-[#5c3e21]/90 hover:bg-[#483019] text-[#faf5eb] border border-[#8b5a2b]/60 text-xs font-semibold rounded-md transition cursor-pointer disabled:opacity-60 flex items-center gap-1.5"
           >
             <LogOut className="h-3.5 w-3.5" />
-            <span>{leaveLoading ? 'Leaving notebook...' : 'Leave this notebook'}</span>
+            <span>{leaveLoading ? 'Leaving notebook...' : 'Leave / Delete this notebook'}</span>
           </button>
         </div>
 
